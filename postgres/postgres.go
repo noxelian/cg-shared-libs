@@ -34,7 +34,28 @@ func (c *Config) DSN() string {
 	)
 }
 
+// Database interface for read/write separation
+type Database interface {
+	Writer() *Pool
+	Reader() *Pool
+	WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error
+	Close()
+}
+
+// NewDatabase creates either Pool or ReplicaPool based on configuration
+// If ReplicaPoolConfig is provided with replicas, creates ReplicaPool
+// Otherwise creates simple Pool
+func NewDatabase(ctx context.Context, cfg Config, replicaCfg *ReplicaPoolConfig) (Database, error) {
+	if replicaCfg != nil && len(replicaCfg.Replicas) > 0 {
+		// Use ReplicaPool if replicas are configured
+		return NewReplicaPool(ctx, *replicaCfg)
+	}
+	// Use simple Pool
+	return New(ctx, cfg)
+}
+
 // Pool wraps pgxpool.Pool with additional functionality
+// Implements Database interface for backward compatibility
 type Pool struct {
 	*pgxpool.Pool
 }
@@ -71,6 +92,16 @@ func New(ctx context.Context, cfg Config) (*Pool, error) {
 	)
 
 	return &Pool{Pool: pool}, nil
+}
+
+// Writer returns the pool itself (for backward compatibility with ReplicaPool interface)
+func (p *Pool) Writer() *Pool {
+	return p
+}
+
+// Reader returns the pool itself (for backward compatibility with ReplicaPool interface)
+func (p *Pool) Reader() *Pool {
+	return p
 }
 
 // Close closes the connection pool
