@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/google/uuid"
 	"gitlab.com/xakpro/cg-shared-libs/logger"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -143,20 +144,23 @@ func loggingInterceptor() grpc.UnaryServerInterceptor {
 	) (any, error) {
 		start := time.Now()
 
-		// Log incoming request details
-		logger.Debug("gRPC request received",
-			zap.String("method", info.FullMethod),
-			zap.Any("request", req),
-		)
-
-		// Extract metadata
-		md, ok := metadata.FromIncomingContext(ctx)
-		if ok {
-			logger.Debug("gRPC request metadata",
-				zap.String("method", info.FullMethod),
-				zap.Any("metadata", md),
-			)
+		// Extract request ID from metadata
+		requestID := GetRequestID(ctx)
+		if requestID == "" {
+			// Generate request ID if not present
+			requestID = generateRequestID()
+			// Add to context for downstream use
+			ctx = logger.WithRequestID(ctx, requestID)
+		} else {
+			// Add existing request ID to logger context
+			ctx = logger.WithRequestID(ctx, requestID)
 		}
+
+		// Log incoming request details with request ID
+		logger.Debug("gRPC request received",
+			zap.String("request_id", requestID),
+			zap.String("method", info.FullMethod),
+		)
 
 		resp, err := handler(ctx, req)
 
@@ -166,25 +170,30 @@ func loggingInterceptor() grpc.UnaryServerInterceptor {
 			code = status.Code(err)
 		}
 
-		// Log based on status
+		// Log based on status with request ID
 		if code == codes.OK {
 			logger.Debug("gRPC request completed",
+				zap.String("request_id", requestID),
 				zap.String("method", info.FullMethod),
 				zap.Duration("duration", duration),
-				zap.Any("response", resp),
 			)
 		} else {
 			logger.Warn("gRPC request failed",
+				zap.String("request_id", requestID),
 				zap.String("method", info.FullMethod),
 				zap.Duration("duration", duration),
 				zap.String("code", code.String()),
-				zap.Any("request", req),
 				zap.Error(err),
 			)
 		}
 
 		return resp, err
 	}
+}
+
+// generateRequestID generates a UUID-based request ID
+func generateRequestID() string {
+	return uuid.New().String()
 }
 
 func timeoutInterceptor(timeout time.Duration) grpc.UnaryServerInterceptor {
