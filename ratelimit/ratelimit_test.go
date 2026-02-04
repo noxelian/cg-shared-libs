@@ -234,20 +234,25 @@ func TestMultiLimiter_UnknownTier(t *testing.T) {
 func TestDefaultTiers(t *testing.T) {
 	tiers := DefaultTiers()
 
-	expectedTiers := []string{"auth", "payment", "api", "search"}
+	expectedTiers := []string{"auth", "payment", "api", "search", "websocket"}
 	for _, tier := range expectedTiers {
 		if _, ok := tiers[tier]; !ok {
 			t.Errorf("expected tier %q not found", tier)
 		}
 	}
 
-	// Check auth tier limits
-	if tiers["auth"].Limit != 5 {
-		t.Errorf("auth limit should be 5, got %d", tiers["auth"].Limit)
+	// Check auth tier limits (10 requests/minute per IP for brute force prevention)
+	if tiers["auth"].Limit != 10 {
+		t.Errorf("auth limit should be 10, got %d", tiers["auth"].Limit)
 	}
 
-	// Check api tier limits
+	// Check api tier limits (100 requests/minute per user)
 	if tiers["api"].Limit != 100 {
 		t.Errorf("api limit should be 100, got %d", tiers["api"].Limit)
+	}
+
+	// Check websocket tier limits (5 connections/minute per user)
+	if tiers["websocket"].Limit != 5 {
+		t.Errorf("websocket limit should be 5, got %d", tiers["websocket"].Limit)
 	}
 }

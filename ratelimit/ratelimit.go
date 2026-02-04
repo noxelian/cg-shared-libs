@@ -165,7 +165,7 @@ func (m *MultiLimiter) Allow(ctx context.Context, tier, key string) (Result, err
 func DefaultTiers() map[string]Config {
 	return map[string]Config{
 		"auth": {
-			Limit:  5,
+			Limit:  10,
 			Window: time.Minute,
 		},
 		"payment": {
@@ -178,6 +178,10 @@ func DefaultTiers() map[string]Config {
 		},
 		"search": {
 			Limit:  30,
+			Window: time.Minute,
+		},
+		"websocket": {
+			Limit:  5,
 			Window: time.Minute,
 		},
 	}

@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -180,6 +181,6 @@ func (c *Client) Unlock(ctx context.Context, key string, value string) error {
 
 // IsNil checks if error is redis.Nil
 func IsNil(err error) bool {
-	return err == redis.Nil
+	return errors.Is(err, redis.Nil)
 }
 

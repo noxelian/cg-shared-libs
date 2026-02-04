@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -183,12 +184,13 @@ func (t *queryTracer) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data pg
 
 // IsNotFound checks if error is "no rows" error
 func IsNotFound(err error) bool {
-	return err == pgx.ErrNoRows
+	return errors.Is(err, pgx.ErrNoRows)
 }
 
 // IsDuplicate checks if error is duplicate key error
 func IsDuplicate(err error) bool {
-	if pgErr, ok := err.(*pgconn.PgError); ok {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
 		return pgErr.Code == "23505" // unique_violation
 	}
 	return false
@@ -196,7 +198,8 @@ func IsDuplicate(err error) bool {
 
 // IsForeignKeyViolation checks if error is foreign key violation
 func IsForeignKeyViolation(err error) bool {
-	if pgErr, ok := err.(*pgconn.PgError); ok {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
 		return pgErr.Code == "23503" // foreign_key_violation
 	}
 	return false
