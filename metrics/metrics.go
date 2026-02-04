@@ -184,3 +184,146 @@ func (m *Metrics) GRPCMetricsInterceptor() grpc.UnaryServerInterceptor {
 func Handler() http.Handler {
 	return promhttp.Handler()
 }
+
+// Circuit Breaker metrics
+var (
+	circuitBreakerState = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "circuit_breaker_state",
+			Help: "Circuit breaker state (0=closed, 1=open, 2=half-open)",
+		},
+		[]string{"name"},
+	)
+
+	circuitBreakerFailures = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "circuit_breaker_failures_total",
+			Help: "Total number of circuit breaker failures",
+		},
+		[]string{"name"},
+	)
+
+	circuitBreakerSuccesses = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "circuit_breaker_successes_total",
+			Help: "Total number of circuit breaker successes",
+		},
+		[]string{"name"},
+	)
+
+	// Database metrics
+	dbConnectionsActive = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "db_connections_active",
+			Help: "Number of active database connections",
+		},
+		[]string{"database"},
+	)
+
+	dbConnectionsIdle = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "db_connections_idle",
+			Help: "Number of idle database connections",
+		},
+		[]string{"database"},
+	)
+
+	// Redis metrics
+	redisOperationsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "redis_operations_total",
+			Help: "Total number of Redis operations",
+		},
+		[]string{"operation", "status"},
+	)
+
+	// Kafka metrics
+	kafkaMessagesProduced = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_messages_produced_total",
+			Help: "Total number of Kafka messages produced",
+		},
+		[]string{"topic"},
+	)
+
+	kafkaMessagesConsumed = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_messages_consumed_total",
+			Help: "Total number of Kafka messages consumed",
+		},
+		[]string{"topic", "group"},
+	)
+
+	// Business metrics
+	activeWebsockets = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "websocket_connections_active",
+			Help: "Number of active WebSocket connections",
+		},
+	)
+
+	requestsCreated = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "business_requests_created_total",
+			Help: "Total number of requests created",
+		},
+	)
+
+	bidsCreated = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "business_bids_created_total",
+			Help: "Total number of bids created",
+		},
+	)
+)
+
+// SetCircuitBreakerState sets the circuit breaker state metric
+func SetCircuitBreakerState(name string, state int) {
+	circuitBreakerState.WithLabelValues(name).Set(float64(state))
+}
+
+// RecordCircuitBreakerFailure records a circuit breaker failure
+func RecordCircuitBreakerFailure(name string) {
+	circuitBreakerFailures.WithLabelValues(name).Inc()
+}
+
+// RecordCircuitBreakerSuccess records a circuit breaker success
+func RecordCircuitBreakerSuccess(name string) {
+	circuitBreakerSuccesses.WithLabelValues(name).Inc()
+}
+
+// SetDBConnections sets database connection metrics
+func SetDBConnections(database string, active, idle int) {
+	dbConnectionsActive.WithLabelValues(database).Set(float64(active))
+	dbConnectionsIdle.WithLabelValues(database).Set(float64(idle))
+}
+
+// RecordRedisOperation records a Redis operation
+func RecordRedisOperation(operation, status string) {
+	redisOperationsTotal.WithLabelValues(operation, status).Inc()
+}
+
+// RecordKafkaMessageProduced records a produced Kafka message
+func RecordKafkaMessageProduced(topic string) {
+	kafkaMessagesProduced.WithLabelValues(topic).Inc()
+}
+
+// RecordKafkaMessageConsumed records a consumed Kafka message
+func RecordKafkaMessageConsumed(topic, group string) {
+	kafkaMessagesConsumed.WithLabelValues(topic, group).Inc()
+}
+
+// SetActiveWebsockets sets the number of active WebSocket connections
+func SetActiveWebsockets(count int) {
+	activeWebsockets.Set(float64(count))
+}
+
+// RecordRequestCreated records a request creation
+func RecordRequestCreated() {
+	requestsCreated.Inc()
+}
+
+// RecordBidCreated records a bid creation
+func RecordBidCreated() {
+	bidsCreated.Inc()
+}

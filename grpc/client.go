@@ -74,6 +74,7 @@ func NewClient(ctx context.Context, cfg ClientConfig, opts ...grpc.DialOption) (
 		),
 		grpc.WithChainUnaryInterceptor(
 			clientLoggingInterceptor(),
+			circuitBreakerInterceptor(), // Circuit breaker for high availability
 			retryInterceptor(cfg.MaxRetries, cfg.RetryWaitTime),
 		),
 	}
