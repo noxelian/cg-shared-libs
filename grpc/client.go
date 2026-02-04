@@ -3,9 +3,11 @@ package grpc
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"gitlab.com/xakpro/cg-shared-libs/circuitbreaker"
 	"gitlab.com/xakpro/cg-shared-libs/logger"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -304,5 +306,119 @@ func isRetryable(code codes.Code) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// Circuit Breaker Registry - manages circuit breakers per target
+var (
+	cbRegistry   = make(map[string]*circuitbreaker.CircuitBreaker)
+	cbRegistryMu sync.RWMutex
+)
+
+// getOrCreateCircuitBreaker gets or creates a circuit breaker for the target
+func getOrCreateCircuitBreaker(target string) *circuitbreaker.CircuitBreaker {
+	cbRegistryMu.RLock()
+	cb, exists := cbRegistry[target]
+	cbRegistryMu.RUnlock()
+
+	if exists {
+		return cb
+	}
+
+	cbRegistryMu.Lock()
+	defer cbRegistryMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if cb, exists := cbRegistry[target]; exists {
+		return cb
+	}
+
+	cb = circuitbreaker.New(circuitbreaker.Config{
+		Name:        target,
+		MaxFailures: 5,
+		Timeout:     30 * time.Second,
+	})
+	cbRegistry[target] = cb
+	return cb
+}
+
+// circuitBreakerInterceptor wraps calls with circuit breaker
+func circuitBreakerInterceptor() grpc.UnaryClientInterceptor {
+	return func(
+		ctx context.Context,
+		method string,
+		req, reply any,
+		cc *grpc.ClientConn,
+		invoker grpc.UnaryInvoker,
+		opts ...grpc.CallOption,
+	) error {
+		cb := getOrCreateCircuitBreaker(cc.Target())
+
+		return cb.Execute(ctx, func(ctx context.Context) error {
+			return invoker(ctx, method, req, reply, cc, opts...)
+		})
+	}
+}
+
+// NewClientWithCircuitBreaker creates a new gRPC client with circuit breaker enabled
+func NewClientWithCircuitBreaker(ctx context.Context, cfg ClientConfig, opts ...grpc.DialOption) (*Client, error) {
+	// Apply defaults
+	maxRecvMsgSize := cfg.MaxRecvMsgSize
+	if maxRecvMsgSize == 0 {
+		maxRecvMsgSize = 4194304
+	}
+	maxSendMsgSize := cfg.MaxSendMsgSize
+	if maxSendMsgSize == 0 {
+		maxSendMsgSize = 4194304
+	}
+
+	defaultOpts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(maxRecvMsgSize),
+			grpc.MaxCallSendMsgSize(maxSendMsgSize),
+		),
+		grpc.WithChainUnaryInterceptor(
+			clientLoggingInterceptor(),
+			circuitBreakerInterceptor(),
+			retryInterceptor(cfg.MaxRetries, cfg.RetryWaitTime),
+		),
+	}
+
+	allOpts := append(defaultOpts, opts...)
+
+	conn, err := grpc.DialContext(ctx, cfg.Addr(), allOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("dial grpc: %w", err)
+	}
+
+	logger.Info("gRPC client with circuit breaker connected",
+		zap.String("addr", cfg.Addr()),
+	)
+
+	return &Client{
+		conn:   conn,
+		config: cfg,
+	}, nil
+}
+
+// GetCircuitBreakerState returns the circuit breaker state for a target
+func GetCircuitBreakerState(target string) circuitbreaker.State {
+	cbRegistryMu.RLock()
+	defer cbRegistryMu.RUnlock()
+
+	if cb, exists := cbRegistry[target]; exists {
+		return cb.State()
+	}
+	return circuitbreaker.StateClosed
+}
+
+// ResetCircuitBreaker resets the circuit breaker for a target
+func ResetCircuitBreaker(target string) {
+	cbRegistryMu.RLock()
+	defer cbRegistryMu.RUnlock()
+
+	if cb, exists := cbRegistry[target]; exists {
+		cb.Reset()
 	}
 }
