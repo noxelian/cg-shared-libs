@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"gitlab.com/xakpro/cg-shared-libs/logger"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -127,21 +128,36 @@ func clientLoggingInterceptor() grpc.UnaryClientInterceptor {
 	) error {
 		start := time.Now()
 
-		// Log outgoing request details
+		// Extract request ID from context
+		requestID := GetRequestIDFromContext(ctx)
+		
+		// Add request ID to outgoing metadata if not present
+		md, ok := metadata.FromOutgoingContext(ctx)
+		if !ok {
+			md = metadata.New(nil)
+		}
+		
+		// Check if request ID already exists in metadata
+		existingVals := md.Get("x-request-id")
+		if len(existingVals) > 0 {
+			requestID = existingVals[0]
+		} else if requestID != "" {
+			// Use extracted request ID
+			md.Set("x-request-id", requestID)
+			ctx = metadata.NewOutgoingContext(ctx, md)
+		} else {
+			// Generate new request ID if not found
+			requestID = generateClientRequestID()
+			md.Set("x-request-id", requestID)
+			ctx = metadata.NewOutgoingContext(ctx, md)
+		}
+
+		// Log outgoing request details with request ID
 		logger.Debug("gRPC client call started",
+			zap.String("request_id", requestID),
 			zap.String("method", method),
 			zap.String("target", cc.Target()),
-			zap.Any("request", req),
 		)
-
-		// Extract metadata if present
-		md, ok := metadata.FromOutgoingContext(ctx)
-		if ok {
-			logger.Debug("gRPC client call metadata",
-				zap.String("method", method),
-				zap.Any("metadata", md),
-			)
-		}
 
 		err := invoker(ctx, method, req, reply, cc, opts...)
 
@@ -153,23 +169,50 @@ func clientLoggingInterceptor() grpc.UnaryClientInterceptor {
 
 		if code == codes.OK {
 			logger.Debug("gRPC client call completed",
+				zap.String("request_id", requestID),
 				zap.String("method", method),
 				zap.Duration("duration", duration),
-				zap.Any("response", reply),
 			)
 		} else {
 			logger.Warn("gRPC client call failed",
+				zap.String("request_id", requestID),
 				zap.String("method", method),
 				zap.Duration("duration", duration),
 				zap.String("code", code.String()),
 				zap.String("target", cc.Target()),
-				zap.Any("request", req),
 				zap.Error(err),
 			)
 		}
 
 		return err
 	}
+}
+
+// GetRequestIDFromContext extracts request ID from context
+// Checks metadata first, then tries to extract from logger context
+func GetRequestIDFromContext(ctx context.Context) string {
+	// Try outgoing metadata first
+	if md, ok := metadata.FromOutgoingContext(ctx); ok {
+		if vals := md.Get("x-request-id"); len(vals) > 0 {
+			return vals[0]
+		}
+	}
+	// Try incoming metadata
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if vals := md.Get("x-request-id"); len(vals) > 0 {
+			return vals[0]
+		}
+	}
+	
+	// Note: logger.WithRequestID stores request_id in logger fields,
+	// but we can't easily extract it. The request_id should be passed
+	// via metadata from the caller (BFF middleware does this via context)
+	return ""
+}
+
+// generateClientRequestID generates a UUID-based request ID for client calls
+func generateClientRequestID() string {
+	return uuid.New().String()
 }
 
 func retryInterceptor(maxRetries int, waitTime time.Duration) grpc.UnaryClientInterceptor {
