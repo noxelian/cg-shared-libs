@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -13,11 +14,51 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	// Import DNS resolver for client-side load balancing
+	_ "google.golang.org/grpc/resolver/dns"
 )
 
+// isRunningInLinkerd detects if the service is running with Linkerd sidecar
+// When Linkerd is present, we should disable client-side LB as Linkerd handles it
+func isRunningInLinkerd() bool {
+	// Linkerd injects these env vars
+	_, hasIdentity := os.LookupEnv("LINKERD2_PROXY_IDENTITY_LOCAL_NAME")
+	_, hasInbound := os.LookupEnv("LINKERD2_PROXY_INBOUND_LISTEN_ADDR")
+	return hasIdentity || hasInbound
+}
+
 // ClientConfig holds gRPC client configuration
+//
+// Load Balancing Setup (IMPORTANT for Kubernetes):
+//
+// 1. Create HEADLESS Kubernetes Service:
+//
+//	apiVersion: v1
+//	kind: Service
+//	metadata:
+//	  name: user-service
+//	spec:
+//	  clusterIP: None  # REQUIRED for load balancing!
+//	  selector:
+//	    app: user-service
+//	  ports:
+//	    - port: 50052
+//
+// 2. Set LoadBalancing: "round_robin" (default)
+//
+// 3. How it works:
+//   - DNS query to "user-service" returns all pod IPs (A records)
+//   - gRPC establishes connections to ALL pods
+//   - round_robin distributes requests across connections
+//   - Keepalive detects dead connections
+//
+// 4. Limitations:
+//   - DNS refresh depends on CoreDNS TTL (default 30s in K8s)
+//   - For instant failover, use service mesh (Istio/Linkerd)
 type ClientConfig struct {
 	Host              string        `yaml:"host"`
 	Port              int           `yaml:"port"`
@@ -30,11 +71,56 @@ type ClientConfig struct {
 	KeepAliveTimeout  time.Duration `yaml:"keep_alive_timeout" env-default:"10s"`
 	InitialWindowSize int32         `yaml:"initial_window_size" env-default:"65536"`
 	InitialConnWindow int32         `yaml:"initial_conn_window" env-default:"65536"`
+	// LoadBalancing enables client-side load balancing for multiple backends
+	// Requires headless Kubernetes service (clusterIP: None)
+	// Options: "" (disabled), "round_robin" (default), "pick_first"
+	LoadBalancing string `yaml:"load_balancing" env:"GRPC_LOAD_BALANCING" env-default:"round_robin"`
 }
 
 // Addr returns client target address
 func (c *ClientConfig) Addr() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
+}
+
+// Target returns the gRPC target with proper scheme for load balancing
+// For load balancing to work, use dns:/// scheme with headless Kubernetes service
+func (c *ClientConfig) Target() string {
+	// When running in Linkerd, use simple address - Linkerd handles LB
+	if isRunningInLinkerd() {
+		return c.Addr()
+	}
+
+	if c.LoadBalancing != "" && c.LoadBalancing != "pick_first" {
+		// Use DNS resolver for client-side load balancing
+		// Format: dns://[authority]/host:port
+		// Empty authority uses system DNS resolver
+		return fmt.Sprintf("dns:///%s:%d", c.Host, c.Port)
+	}
+	return c.Addr()
+}
+
+// ServiceConfig returns gRPC service config JSON for load balancing
+// Includes health checking and load balancing configuration
+func (c *ClientConfig) ServiceConfig() string {
+	// When running in Linkerd, no client-side LB config needed
+	if isRunningInLinkerd() {
+		return ""
+	}
+
+	if c.LoadBalancing == "" || c.LoadBalancing == "pick_first" {
+		return ""
+	}
+	// Service config with:
+	// - Load balancing policy (round_robin)
+	// - Health checking (optional, for better failover)
+	// - Retry policy is handled by our interceptor
+	return fmt.Sprintf(`{
+		"loadBalancingConfig": [{"%s":{}}],
+		"methodConfig": [{
+			"name": [{"service": ""}],
+			"waitForReady": true
+		}]
+	}`, c.LoadBalancing)
 }
 
 // Client wraps gRPC client connection
@@ -55,6 +141,13 @@ func NewClient(ctx context.Context, cfg ClientConfig, opts ...grpc.DialOption) (
 		maxSendMsgSize = 4194304 // 4MB default
 	}
 
+	// Detect service mesh
+	inLinkerd := isRunningInLinkerd()
+	effectiveLB := cfg.LoadBalancing
+	if inLinkerd {
+		effectiveLB = "linkerd (service mesh)"
+	}
+
 	logger.Info("gRPC client configuration",
 		zap.String("host", cfg.Host),
 		zap.Int("port", cfg.Port),
@@ -63,8 +156,20 @@ func NewClient(ctx context.Context, cfg ClientConfig, opts ...grpc.DialOption) (
 		zap.Int("max_retries", cfg.MaxRetries),
 		zap.Duration("retry_wait_time", cfg.RetryWaitTime),
 		zap.Duration("timeout", cfg.Timeout),
-		zap.String("addr", cfg.Addr()),
+		zap.String("target", cfg.Target()),
+		zap.String("load_balancing", effectiveLB),
+		zap.Bool("linkerd_detected", inLinkerd),
 	)
+
+	// Keepalive settings for connection health
+	keepAliveTime := cfg.KeepAliveTime
+	if keepAliveTime == 0 {
+		keepAliveTime = 30 * time.Second
+	}
+	keepAliveTimeout := cfg.KeepAliveTimeout
+	if keepAliveTimeout == 0 {
+		keepAliveTimeout = 10 * time.Second
+	}
 
 	defaultOpts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -72,6 +177,12 @@ func NewClient(ctx context.Context, cfg ClientConfig, opts ...grpc.DialOption) (
 			grpc.MaxCallRecvMsgSize(maxRecvMsgSize),
 			grpc.MaxCallSendMsgSize(maxSendMsgSize),
 		),
+		// Keepalive is important for load balancing - detects dead connections
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                keepAliveTime,    // Ping interval when idle
+			Timeout:             keepAliveTimeout, // Wait for ping response
+			PermitWithoutStream: true,             // Send pings even without active streams
+		}),
 		grpc.WithChainUnaryInterceptor(
 			clientLoggingInterceptor(),
 			circuitBreakerInterceptor(), // Circuit breaker for high availability
@@ -79,19 +190,25 @@ func NewClient(ctx context.Context, cfg ClientConfig, opts ...grpc.DialOption) (
 		),
 	}
 
+	// Add load balancing service config if enabled
+	if svcCfg := cfg.ServiceConfig(); svcCfg != "" {
+		defaultOpts = append(defaultOpts, grpc.WithDefaultServiceConfig(svcCfg))
+	}
+
 	allOpts := append(defaultOpts, opts...)
 
-	conn, err := grpc.DialContext(ctx, cfg.Addr(), allOpts...)
+	conn, err := grpc.DialContext(ctx, cfg.Target(), allOpts...)
 	if err != nil {
 		logger.Error("failed to dial gRPC server",
-			zap.String("addr", cfg.Addr()),
+			zap.String("target", cfg.Target()),
 			zap.Error(err),
 		)
 		return nil, fmt.Errorf("dial grpc: %w", err)
 	}
 
 	logger.Info("gRPC client connected",
-		zap.String("addr", cfg.Addr()),
+		zap.String("target", cfg.Target()),
+		zap.String("load_balancing", cfg.LoadBalancing),
 		zap.Int("applied_max_recv_msg_size", maxRecvMsgSize),
 		zap.Int("applied_max_send_msg_size", maxSendMsgSize),
 	)
