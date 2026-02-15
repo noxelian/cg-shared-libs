@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -49,8 +50,37 @@ func (l *Limiter) Allow(ctx context.Context, key string) (Result, error) {
 	return l.AllowN(ctx, key, 1)
 }
 
+// isTransactionRecoverableError returns true if the error is EXECABORT or WRONGTYPE.
+// Such errors can occur when the key exists with a different type (e.g. string from
+// another service or old code). Deleting the key and retrying once fixes the issue.
+func isTransactionRecoverableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "EXECABORT") || strings.Contains(s, "WRONGTYPE")
+}
+
 // AllowN checks if N requests are allowed under the rate limit
 func (l *Limiter) AllowN(ctx context.Context, key string, n int) (Result, error) {
+	result, err := l.allowN(ctx, key, n)
+	if err != nil && isTransactionRecoverableError(err) {
+		// Key may exist with wrong type (e.g. string). Delete and retry once.
+		fullKey := fmt.Sprintf("%s:%s", l.prefix, key)
+		if delErr := l.client.Del(ctx, fullKey).Err(); delErr != nil {
+			return Result{}, fmt.Errorf("rate limit check: %w (recovery del: %v)", err, delErr)
+		}
+		logger.Debug("rate limit key had wrong type, deleted and retrying",
+			zap.String("key", key),
+			zap.String("full_key", fullKey),
+		)
+		result, err = l.allowN(ctx, key, n)
+	}
+	return result, err
+}
+
+// allowN runs the rate limit transaction once (ZRemRangeByScore, ZCard, ZAdd, Expire).
+func (l *Limiter) allowN(ctx context.Context, key string, n int) (Result, error) {
 	now := time.Now()
 	windowStart := now.Add(-l.config.Window)
 	fullKey := fmt.Sprintf("%s:%s", l.prefix, key)
@@ -98,11 +128,11 @@ func (l *Limiter) AllowN(ctx context.Context, key string, n int) (Result, error)
 
 	if !allowed {
 		// Remove the requests we just added since they're not allowed
-		pipe := l.client.TxPipeline()
+		rollbackPipe := l.client.TxPipeline()
 		for i := 0; i < n; i++ {
-			pipe.ZRem(ctx, fullKey, fmt.Sprintf("%d-%d", now.UnixNano(), i))
+			rollbackPipe.ZRem(ctx, fullKey, fmt.Sprintf("%d-%d", now.UnixNano(), i))
 		}
-		_, _ = pipe.Exec(ctx)
+		_, _ = rollbackPipe.Exec(ctx)
 
 		logger.Debug("rate limit exceeded",
 			zap.String("key", key),

@@ -231,6 +231,45 @@ func TestMultiLimiter_UnknownTier(t *testing.T) {
 	}
 }
 
+// TestLimiter_Allow_RecoversFromWrongType verifies that when the rate limit key
+// exists with a wrong type (e.g. string from another service), the limiter deletes
+// it and retries, allowing the first request to succeed instead of failing with EXECABORT.
+func TestLimiter_Allow_RecoversFromWrongType(t *testing.T) {
+	client, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	cfg := Config{
+		Limit:  2,
+		Window: time.Minute,
+	}
+	limiter := New(client, cfg, "test")
+	ctx := context.Background()
+
+	// Simulate a key created with wrong type (e.g. SET by another service or old code)
+	fullKey := "test:user:1"
+	if err := client.Set(ctx, fullKey, "wrong-type-value", time.Minute).Err(); err != nil {
+		t.Fatalf("setup: Set failed: %v", err)
+	}
+
+	// First Allow should recover (Del + retry) and succeed
+	result, err := limiter.Allow(ctx, "user:1")
+	if err != nil {
+		t.Fatalf("Allow failed after wrong-type recovery: %v", err)
+	}
+	if !result.Allowed {
+		t.Error("first request should be allowed after recovery")
+	}
+
+	// Second request should still work normally
+	result, err = limiter.Allow(ctx, "user:1")
+	if err != nil {
+		t.Fatalf("Allow failed: %v", err)
+	}
+	if !result.Allowed {
+		t.Error("second request should be allowed")
+	}
+}
+
 func TestDefaultTiers(t *testing.T) {
 	tiers := DefaultTiers()
 
