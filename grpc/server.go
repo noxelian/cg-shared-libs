@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
@@ -59,10 +60,15 @@ func NewServer(cfg ServerConfig, opts ...grpc.ServerOption) (*Server, error) {
 		zap.String("addr", cfg.Addr()),
 	)
 
-	// Add default interceptors
+	// Keepalive enforcement policy — allow client pings without active streams
+	// and permit more frequent pings (matches client PermitWithoutStream: true)
 	defaultOpts := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(maxRecvMsgSize),
 		grpc.MaxSendMsgSize(maxSendMsgSize),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             30 * time.Second, // Minimum time between client pings
+			PermitWithoutStream: true,             // Allow pings even without active streams
+		}),
 		grpc.ChainUnaryInterceptor(
 			recoveryInterceptor(),
 			loggingInterceptor(),
