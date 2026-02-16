@@ -148,19 +148,6 @@ func NewClient(ctx context.Context, cfg ClientConfig, opts ...grpc.DialOption) (
 		effectiveLB = "linkerd (service mesh)"
 	}
 
-	logger.Info("gRPC client configuration",
-		zap.String("host", cfg.Host),
-		zap.Int("port", cfg.Port),
-		zap.Int("max_recv_msg_size", maxRecvMsgSize),
-		zap.Int("max_send_msg_size", maxSendMsgSize),
-		zap.Int("max_retries", cfg.MaxRetries),
-		zap.Duration("retry_wait_time", cfg.RetryWaitTime),
-		zap.Duration("timeout", cfg.Timeout),
-		zap.String("target", cfg.Target()),
-		zap.String("load_balancing", effectiveLB),
-		zap.Bool("linkerd_detected", inLinkerd),
-	)
-
 	// Keepalive settings for connection health
 	keepAliveTime := cfg.KeepAliveTime
 	if keepAliveTime == 0 {
@@ -170,6 +157,21 @@ func NewClient(ctx context.Context, cfg ClientConfig, opts ...grpc.DialOption) (
 	if keepAliveTimeout == 0 {
 		keepAliveTimeout = 10 * time.Second
 	}
+
+	logger.Info("gRPC client configuration",
+		zap.String("host", cfg.Host),
+		zap.Int("port", cfg.Port),
+		zap.Int("max_recv_msg_size", maxRecvMsgSize),
+		zap.Int("max_send_msg_size", maxSendMsgSize),
+		zap.Int("max_retries", cfg.MaxRetries),
+		zap.Duration("retry_wait_time", cfg.RetryWaitTime),
+		zap.Duration("timeout", cfg.Timeout),
+		zap.Duration("keep_alive_time", keepAliveTime),
+		zap.Duration("keep_alive_timeout", keepAliveTimeout),
+		zap.String("target", cfg.Target()),
+		zap.String("load_balancing", effectiveLB),
+		zap.Bool("linkerd_detected", inLinkerd),
+	)
 
 	defaultOpts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
