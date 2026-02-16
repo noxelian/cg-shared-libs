@@ -61,21 +61,44 @@ func isTransactionRecoverableError(err error) bool {
 	return strings.Contains(s, "EXECABORT") || strings.Contains(s, "WRONGTYPE")
 }
 
+// isReadOnlyError returns true if the error is Redis READONLY (e.g. write against a replica).
+// Rate limiting requires writes; on a replica we fail open (allow request) to avoid blocking traffic.
+func isReadOnlyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "READONLY")
+}
+
 // AllowN checks if N requests are allowed under the rate limit
 func (l *Limiter) AllowN(ctx context.Context, key string, n int) (Result, error) {
 	result, err := l.allowN(ctx, key, n)
-	if err != nil && isTransactionRecoverableError(err) {
-		// Key may exist with wrong type (e.g. string). Delete and retry once.
-		fullKey := fmt.Sprintf("%s:%s", l.prefix, key)
-		if delErr := l.client.Del(ctx, fullKey).Err(); delErr != nil {
-			return Result{}, fmt.Errorf("rate limit check: %w (recovery del: %v)", err, delErr)
-		}
-		logger.Debug("rate limit key had wrong type, deleted and retrying",
-			zap.String("key", key),
-			zap.String("full_key", fullKey),
-		)
-		result, err = l.allowN(ctx, key, n)
+	if err == nil {
+		return result, nil
 	}
+	// Fail open when connected to a read replica so traffic is not blocked
+	if isReadOnlyError(err) {
+		logger.Debug("rate limit skipped (Redis read-only replica)", zap.String("key", key))
+		return Result{Allowed: true, Limit: l.config.Limit, Remaining: int64(l.config.Limit), ResetAfter: l.config.Window}, nil
+	}
+	if !isTransactionRecoverableError(err) {
+		return Result{}, err
+	}
+	// Key may exist with wrong type (e.g. string). Delete and retry once.
+	// Skip recovery on read-only (replica): Del would fail and retry would hit same error.
+	fullKey := fmt.Sprintf("%s:%s", l.prefix, key)
+	if delErr := l.client.Del(ctx, fullKey).Err(); delErr != nil {
+		if isReadOnlyError(delErr) {
+			logger.Debug("rate limit recovery skipped (Redis read-only replica)", zap.String("key", key))
+			return Result{Allowed: true, Limit: l.config.Limit, Remaining: int64(l.config.Limit), ResetAfter: l.config.Window}, nil
+		}
+		return Result{}, fmt.Errorf("rate limit check: %w", err)
+	}
+	logger.Debug("rate limit key had wrong type, deleted and retrying",
+		zap.String("key", key),
+		zap.String("full_key", fullKey),
+	)
+	result, err = l.allowN(ctx, key, n)
 	return result, err
 }
 
