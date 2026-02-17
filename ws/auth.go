@@ -12,7 +12,7 @@ import (
 
 // TokenValidator interface for JWT validation
 type TokenValidator interface {
-	Parse(tokenString string) (*jwt.Claims, error)
+	ValidateAccessToken(tokenString string) (*jwt.Claims, error)
 }
 
 // Authenticator handles WebSocket authentication
@@ -32,9 +32,9 @@ func (a *Authenticator) ExtractUserID(r *http.Request) (int64, error) {
 		return 0, fmt.Errorf("token not found")
 	}
 
-	claims, err := a.jwtManager.Parse(tokenStr)
+	claims, err := a.jwtManager.ValidateAccessToken(tokenStr)
 	if err != nil {
-		logger.Debug("failed to validate token", zap.Error(err))
+		logger.Debug("failed to validate access token", zap.Error(err))
 		return 0, fmt.Errorf("invalid token: %w", err)
 	}
 
