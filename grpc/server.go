@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"runtime/debug"
 	"time"
 
 	"github.com/google/uuid"
@@ -133,6 +134,7 @@ func recoveryInterceptor() grpc.UnaryServerInterceptor {
 				logger.Error("gRPC panic recovered",
 					zap.Any("panic", r),
 					zap.String("method", info.FullMethod),
+					zap.String("stack", string(debug.Stack())),
 				)
 				err = status.Errorf(codes.Internal, "internal error")
 			}
