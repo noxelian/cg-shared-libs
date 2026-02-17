@@ -74,7 +74,8 @@ type ClientConfig struct {
 	// LoadBalancing enables client-side load balancing for multiple backends
 	// Requires headless Kubernetes service (clusterIP: None)
 	// Options: "" (disabled), "round_robin" (default), "pick_first"
-	LoadBalancing string `yaml:"load_balancing" env:"GRPC_LOAD_BALANCING" env-default:"round_robin"`
+	LoadBalancing string    `yaml:"load_balancing" env:"GRPC_LOAD_BALANCING" env-default:"round_robin"`
+	TLS           TLSConfig `yaml:"tls"`
 }
 
 // Addr returns client target address
@@ -173,8 +174,24 @@ func NewClient(ctx context.Context, cfg ClientConfig, opts ...grpc.DialOption) (
 		zap.Bool("linkerd_detected", inLinkerd),
 	)
 
+	// Select transport credentials: TLS if enabled, insecure otherwise
+	var transportCreds grpc.DialOption
+	if cfg.TLS.Enabled {
+		creds, err := cfg.TLS.ClientCredentials()
+		if err != nil {
+			return nil, fmt.Errorf("client TLS credentials: %w", err)
+		}
+		transportCreds = grpc.WithTransportCredentials(creds)
+		logger.Info("gRPC client TLS enabled",
+			zap.String("target", cfg.Target()),
+			zap.Bool("mtls", cfg.TLS.CertFile != ""),
+		)
+	} else {
+		transportCreds = grpc.WithTransportCredentials(insecure.NewCredentials())
+	}
+
 	defaultOpts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		transportCreds,
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(maxRecvMsgSize),
 			grpc.MaxCallSendMsgSize(maxSendMsgSize),
@@ -272,6 +289,11 @@ func clientLoggingInterceptor() grpc.UnaryClientInterceptor {
 			requestID = generateClientRequestID()
 			md.Set("x-request-id", requestID)
 			ctx = metadata.NewOutgoingContext(ctx, md)
+		}
+
+		// Propagate session_id for bank audit compliance
+		if vals := md.Get("x-session-id"); len(vals) > 0 {
+			ctx = logger.WithSessionID(ctx, vals[0])
 		}
 
 		// Log outgoing request details with request ID
@@ -492,8 +514,20 @@ func NewClientWithCircuitBreaker(ctx context.Context, cfg ClientConfig, opts ...
 		maxSendMsgSize = 4194304
 	}
 
+	// Select transport credentials: TLS if enabled, insecure otherwise
+	var cbTransportCreds grpc.DialOption
+	if cfg.TLS.Enabled {
+		creds, err := cfg.TLS.ClientCredentials()
+		if err != nil {
+			return nil, fmt.Errorf("client TLS credentials: %w", err)
+		}
+		cbTransportCreds = grpc.WithTransportCredentials(creds)
+	} else {
+		cbTransportCreds = grpc.WithTransportCredentials(insecure.NewCredentials())
+	}
+
 	defaultOpts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		cbTransportCreds,
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(maxRecvMsgSize),
 			grpc.MaxCallSendMsgSize(maxSendMsgSize),
@@ -514,6 +548,7 @@ func NewClientWithCircuitBreaker(ctx context.Context, cfg ClientConfig, opts ...
 
 	logger.Info("gRPC client with circuit breaker connected",
 		zap.String("addr", cfg.Addr()),
+		zap.Bool("tls_enabled", cfg.TLS.Enabled),
 	)
 
 	return &Client{

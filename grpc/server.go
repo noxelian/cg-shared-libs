@@ -25,6 +25,7 @@ type ServerConfig struct {
 	MaxSendMsgSize  int           `yaml:"max_send_msg_size" env:"GRPC_MAX_SEND_MSG_SIZE" env-default:"4194304"` // 4MB
 	ConnectionLimit int           `yaml:"connection_limit" env:"GRPC_CONN_LIMIT" env-default:"1000"`
 	Timeout         time.Duration `yaml:"timeout" env:"GRPC_TIMEOUT" env-default:"30s"`
+	TLS             TLSConfig     `yaml:"tls"`
 }
 
 // Addr returns server address
@@ -60,6 +61,21 @@ func NewServer(cfg ServerConfig, opts ...grpc.ServerOption) (*Server, error) {
 		zap.Duration("timeout", cfg.Timeout),
 		zap.String("addr", cfg.Addr()),
 	)
+
+	// Apply TLS credentials if enabled
+	if cfg.TLS.Enabled {
+		creds, err := cfg.TLS.ServerCredentials()
+		if err != nil {
+			return nil, fmt.Errorf("server TLS credentials: %w", err)
+		}
+		if creds != nil {
+			opts = append(opts, grpc.Creds(creds))
+			logger.Info("gRPC server TLS enabled",
+				zap.String("cert_file", cfg.TLS.CertFile),
+				zap.Bool("mtls", cfg.TLS.CAFile != ""),
+			)
+		}
+	}
 
 	// Keepalive enforcement policy — allow client pings without active streams
 	// and permit more frequent pings (matches client PermitWithoutStream: true)
@@ -164,6 +180,12 @@ func loggingInterceptor() grpc.UnaryServerInterceptor {
 			ctx = logger.WithRequestID(ctx, requestID)
 		}
 
+		// Extract session_id from metadata (bank compliance)
+		sessionID := GetMetadata(ctx, "x-session-id")
+		if sessionID != "" {
+			ctx = logger.WithSessionID(ctx, sessionID)
+		}
+
 		// Log incoming request details with request ID
 		logger.Debug("gRPC request received",
 			zap.String("request_id", requestID),
@@ -266,6 +288,11 @@ func GetUserID(ctx context.Context) int64 {
 // GetRequestID extracts request_id from metadata
 func GetRequestID(ctx context.Context) string {
 	return GetMetadata(ctx, "x-request-id")
+}
+
+// GetSessionID extracts session_id from metadata
+func GetSessionID(ctx context.Context) string {
+	return GetMetadata(ctx, "x-session-id")
 }
 
 // AuthInterceptorConfig holds auth interceptor configuration

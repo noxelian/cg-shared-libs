@@ -6,6 +6,9 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Field length limits
@@ -316,4 +319,40 @@ func ValidateStringRequired(field, value string) error {
 		}
 	}
 	return nil
+}
+
+// GRPCError returns a gRPC InvalidArgument status error from the validator.
+// Returns nil if there are no validation errors.
+func (v *Validator) GRPCError() error {
+	if !v.HasErrors() {
+		return nil
+	}
+	return status.Error(codes.InvalidArgument, v.ErrorString())
+}
+
+// ValidatePositiveID validates that an ID is > 0
+func (v *Validator) ValidatePositiveID(field string, value int64) *Validator {
+	if value <= 0 {
+		v.addError(field, "must be a positive integer", ErrNegativeValue)
+	}
+	return v
+}
+
+// ValidatePageSize validates pagination parameters
+func (v *Validator) ValidatePageSize(page, pageSize int32, maxPageSize int32) *Validator {
+	if page < 0 {
+		v.addError("page", "must be >= 0", ErrValueOutOfRange)
+	}
+	if pageSize < 1 || pageSize > maxPageSize {
+		v.addError("page_size", fmt.Sprintf("must be between 1 and %d", maxPageSize), ErrValueOutOfRange)
+	}
+	return v
+}
+
+// ValidateAmount validates that an amount (financial) is positive
+func (v *Validator) ValidateAmount(field string, value float64) *Validator {
+	if value <= 0 {
+		v.addError(field, "must be greater than 0", ErrNegativeValue)
+	}
+	return v
 }

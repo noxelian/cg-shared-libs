@@ -16,11 +16,20 @@ type Config struct {
 	Issuer          string        `yaml:"issuer" env:"JWT_ISSUER" env-default:"cg-platform"`
 }
 
+// TokenType represents the type of JWT token
+type TokenType string
+
+const (
+	TokenTypeAccess  TokenType = "access"
+	TokenTypeRefresh TokenType = "refresh"
+)
+
 // Claims represents JWT claims
 type Claims struct {
-	UserID   int64  `json:"user_id"`
-	Phone    string `json:"phone,omitempty"`
-	DeviceID string `json:"device_id,omitempty"`
+	UserID    int64     `json:"user_id"`
+	Phone     string    `json:"phone,omitempty"`
+	DeviceID  string    `json:"device_id,omitempty"`
+	TokenType TokenType `json:"token_type,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -55,12 +64,12 @@ func NewManager(cfg Config) (*Manager, error) {
 
 // GenerateTokenPair generates access and refresh tokens
 func (m *Manager) GenerateTokenPair(userID int64, phone, deviceID string) (*TokenPair, error) {
-	accessToken, expiresAt, err := m.generateToken(userID, phone, deviceID, m.accessTokenTTL)
+	accessToken, expiresAt, err := m.generateToken(userID, phone, deviceID, m.accessTokenTTL, TokenTypeAccess)
 	if err != nil {
 		return nil, fmt.Errorf("generate access token: %w", err)
 	}
 
-	refreshToken, _, err := m.generateToken(userID, phone, deviceID, m.refreshTokenTTL)
+	refreshToken, _, err := m.generateToken(userID, phone, deviceID, m.refreshTokenTTL, TokenTypeRefresh)
 	if err != nil {
 		return nil, fmt.Errorf("generate refresh token: %w", err)
 	}
@@ -74,16 +83,17 @@ func (m *Manager) GenerateTokenPair(userID int64, phone, deviceID string) (*Toke
 
 // GenerateAccessToken generates only access token
 func (m *Manager) GenerateAccessToken(userID int64, phone, deviceID string) (string, time.Time, error) {
-	return m.generateToken(userID, phone, deviceID, m.accessTokenTTL)
+	return m.generateToken(userID, phone, deviceID, m.accessTokenTTL, TokenTypeAccess)
 }
 
-func (m *Manager) generateToken(userID int64, phone, deviceID string, ttl time.Duration) (string, time.Time, error) {
+func (m *Manager) generateToken(userID int64, phone, deviceID string, ttl time.Duration, tokenType TokenType) (string, time.Time, error) {
 	expiresAt := time.Now().Add(ttl)
 
 	claims := Claims{
-		UserID:   userID,
-		Phone:    phone,
-		DeviceID: deviceID,
+		UserID:    userID,
+		Phone:     phone,
+		DeviceID:  deviceID,
+		TokenType: tokenType,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -124,14 +134,30 @@ func (m *Manager) Parse(tokenString string) (*Claims, error) {
 	return claims, nil
 }
 
-// ValidateAccessToken validates access token
+// ValidateAccessToken validates access token and checks token_type claim
 func (m *Manager) ValidateAccessToken(tokenString string) (*Claims, error) {
-	return m.Parse(tokenString)
+	claims, err := m.Parse(tokenString)
+	if err != nil {
+		return nil, err
+	}
+	// Backward compatibility: accept tokens without token_type (pre-migration)
+	if claims.TokenType != "" && claims.TokenType != TokenTypeAccess {
+		return nil, ErrWrongTokenType
+	}
+	return claims, nil
 }
 
-// ValidateRefreshToken validates refresh token
+// ValidateRefreshToken validates refresh token and checks token_type claim
 func (m *Manager) ValidateRefreshToken(tokenString string) (*Claims, error) {
-	return m.Parse(tokenString)
+	claims, err := m.Parse(tokenString)
+	if err != nil {
+		return nil, err
+	}
+	// Backward compatibility: accept tokens without token_type (pre-migration)
+	if claims.TokenType != "" && claims.TokenType != TokenTypeRefresh {
+		return nil, ErrWrongTokenType
+	}
+	return claims, nil
 }
 
 // Refresh generates new token pair using refresh token
@@ -146,7 +172,8 @@ func (m *Manager) Refresh(refreshToken string) (*TokenPair, error) {
 
 // Errors
 var (
-	ErrTokenExpired = errors.New("token expired")
-	ErrInvalidToken = errors.New("invalid token")
+	ErrTokenExpired  = errors.New("token expired")
+	ErrInvalidToken  = errors.New("invalid token")
+	ErrWrongTokenType = errors.New("wrong token type")
 )
 

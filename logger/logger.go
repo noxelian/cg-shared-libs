@@ -121,6 +121,18 @@ func WithUserID(ctx context.Context, userID int64) context.Context {
 	return ToContext(ctx, l)
 }
 
+// WithSessionID adds session_id field to logger
+func WithSessionID(ctx context.Context, sessionID string) context.Context {
+	l := WithContext(ctx).With(zap.String("session_id", sessionID))
+	return ToContext(ctx, l)
+}
+
+// WithTransactionID adds transaction_id field to logger
+func WithTransactionID(ctx context.Context, txnID string) context.Context {
+	l := WithContext(ctx).With(zap.String("transaction_id", txnID))
+	return ToContext(ctx, l)
+}
+
 // Convenience methods
 
 func Debug(msg string, fields ...zap.Field) {

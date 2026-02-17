@@ -20,7 +20,7 @@ type Config struct {
 	User            string        `yaml:"user" env:"POSTGRES_USER" env-default:"cg_user"`
 	Password        string        `yaml:"password" env:"POSTGRES_PASSWORD"`
 	Database        string        `yaml:"database" env:"POSTGRES_DB"`
-	SSLMode         string        `yaml:"ssl_mode" env:"POSTGRES_SSL_MODE" env-default:"disable"`
+	SSLMode         string        `yaml:"ssl_mode" env:"POSTGRES_SSL_MODE" env-default:"require"`
 	MaxConns        int32         `yaml:"max_conns" env:"POSTGRES_MAX_CONNS" env-default:"25"`
 	MinConns        int32         `yaml:"min_conns" env:"POSTGRES_MIN_CONNS" env-default:"5"`
 	MaxConnLifetime time.Duration `yaml:"max_conn_lifetime" env:"POSTGRES_MAX_CONN_LIFETIME" env-default:"1h"`

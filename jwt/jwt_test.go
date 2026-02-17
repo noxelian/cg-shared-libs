@@ -81,6 +81,7 @@ func TestParse_ValidToken(t *testing.T) {
 	assert.Equal(t, "+77001234567", claims.Phone)
 	assert.Equal(t, "device-001", claims.DeviceID)
 	assert.Equal(t, "test-issuer", claims.Issuer)
+	assert.Equal(t, TokenTypeAccess, claims.TokenType)
 }
 
 func TestParse_ExpiredToken(t *testing.T) {
@@ -398,6 +399,67 @@ func TestConcurrentTokenParsing(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		<-done
 	}
+}
+
+// Token type tests
+
+func TestTokenType_AccessTokenHasCorrectType(t *testing.T) {
+	manager := createTestManager(t)
+
+	pair, err := manager.GenerateTokenPair(123, "+77001234567", "device-001")
+	require.NoError(t, err)
+
+	claims, err := manager.Parse(pair.AccessToken)
+	require.NoError(t, err)
+	assert.Equal(t, TokenTypeAccess, claims.TokenType)
+}
+
+func TestTokenType_RefreshTokenHasCorrectType(t *testing.T) {
+	manager := createTestManager(t)
+
+	pair, err := manager.GenerateTokenPair(123, "+77001234567", "device-001")
+	require.NoError(t, err)
+
+	claims, err := manager.Parse(pair.RefreshToken)
+	require.NoError(t, err)
+	assert.Equal(t, TokenTypeRefresh, claims.TokenType)
+}
+
+func TestValidateAccessToken_RejectsRefreshToken(t *testing.T) {
+	manager := createTestManager(t)
+
+	pair, err := manager.GenerateTokenPair(123, "+77001234567", "device-001")
+	require.NoError(t, err)
+
+	// Try to validate refresh token as access token
+	_, err = manager.ValidateAccessToken(pair.RefreshToken)
+	assert.ErrorIs(t, err, ErrWrongTokenType)
+}
+
+func TestValidateRefreshToken_RejectsAccessToken(t *testing.T) {
+	manager := createTestManager(t)
+
+	pair, err := manager.GenerateTokenPair(123, "+77001234567", "device-001")
+	require.NoError(t, err)
+
+	// Try to validate access token as refresh token
+	_, err = manager.ValidateRefreshToken(pair.AccessToken)
+	assert.ErrorIs(t, err, ErrWrongTokenType)
+}
+
+func TestGenerateAccessToken_HasAccessType(t *testing.T) {
+	manager := createTestManager(t)
+
+	token, _, err := manager.GenerateAccessToken(456, "+77009876543", "device-002")
+	require.NoError(t, err)
+
+	claims, err := manager.Parse(token)
+	require.NoError(t, err)
+	assert.Equal(t, TokenTypeAccess, claims.TokenType)
+
+	// Should pass access validation
+	_, err = manager.ValidateAccessToken(token)
+	assert.NoError(t, err)
 }
 
 // Helper function

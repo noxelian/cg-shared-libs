@@ -21,11 +21,11 @@ import (
 
 // Config holds OpenTelemetry configuration
 type Config struct {
-	ServiceName    string
-	ServiceVersion string
-	Environment    string
-	OTLPEndpoint   string // e.g., "localhost:4317" for gRPC
-	Enabled        bool
+	Enabled        bool   `yaml:"enabled" env:"OTEL_ENABLED" env-default:"false"`
+	ServiceName    string `yaml:"service_name" env:"OTEL_SERVICE_NAME"`
+	ServiceVersion string `yaml:"service_version" env:"OTEL_SERVICE_VERSION" env-default:"0.0.0"`
+	Environment    string `yaml:"environment" env:"OTEL_ENVIRONMENT" env-default:"development"`
+	OTLPEndpoint   string `yaml:"otlp_endpoint" env:"OTEL_EXPORTER_OTLP_ENDPOINT" env-default:"localhost:4317"`
 }
 
 // Init initializes OpenTelemetry tracing
