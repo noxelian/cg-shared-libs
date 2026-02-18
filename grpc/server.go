@@ -338,6 +338,12 @@ func MustGetAuthInfo(ctx context.Context) *AuthInfo {
 	return info
 }
 
+// ContextWithAuthInfo returns a new context with AuthInfo set.
+// Intended for use in tests where the auth interceptor is not running.
+func ContextWithAuthInfo(ctx context.Context, info *AuthInfo) context.Context {
+	return context.WithValue(ctx, authContextKey{}, info)
+}
+
 // AuthInterceptor creates authentication interceptor
 func AuthInterceptor(validator JWTValidator, cfg AuthInterceptorConfig) grpc.UnaryServerInterceptor {
 	skipMap := make(map[string]bool)
