@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"gitlab.com/xakpro/cg-shared-libs/circuitbreaker"
 	"gitlab.com/xakpro/cg-shared-libs/logger"
+	"gitlab.com/xakpro/cg-shared-libs/tracing"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -213,6 +214,9 @@ func NewClient(ctx context.Context, cfg ClientConfig, opts ...grpc.DialOption) (
 	if svcCfg := cfg.ServiceConfig(); svcCfg != "" {
 		defaultOpts = append(defaultOpts, grpc.WithDefaultServiceConfig(svcCfg))
 	}
+
+	// Add OpenTelemetry tracing interceptors for distributed tracing
+	defaultOpts = append(defaultOpts, tracing.GRPCClientInterceptors()...)
 
 	allOpts := append(defaultOpts, opts...)
 
@@ -538,6 +542,9 @@ func NewClientWithCircuitBreaker(ctx context.Context, cfg ClientConfig, opts ...
 			retryInterceptor(cfg.MaxRetries, cfg.RetryWaitTime),
 		),
 	}
+
+	// Add OpenTelemetry tracing interceptors for distributed tracing
+	defaultOpts = append(defaultOpts, tracing.GRPCClientInterceptors()...)
 
 	allOpts := append(defaultOpts, opts...)
 
