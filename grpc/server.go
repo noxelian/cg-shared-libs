@@ -186,6 +186,9 @@ func loggingInterceptor() grpc.UnaryServerInterceptor {
 			ctx = logger.WithSessionID(ctx, sessionID)
 		}
 
+		// Inject trace_id/span_id from OpenTelemetry context
+		ctx = logger.WithTraceID(ctx)
+
 		// Log incoming request details with request ID
 		logger.Debug("gRPC request received",
 			zap.String("request_id", requestID),
@@ -372,27 +375,16 @@ func AuthInterceptor(validator JWTValidator, cfg AuthInterceptorConfig) grpc.Una
 		}
 
 		// Remove "Bearer " prefix if present
-		originalToken := token
 		if len(token) > 7 && token[:7] == "Bearer " {
 			token = token[7:]
-			logger.Debug("removed Bearer prefix from token",
-				zap.String("method", info.FullMethod),
-				zap.Int("original_length", len(originalToken)),
-				zap.Int("token_length", len(token)),
-			)
 		}
 
 		// Validate token
-		logger.Debug("validating token",
-			zap.String("method", info.FullMethod),
-			zap.Int("token_length", len(token)),
-		)
 		claims, err := validator.ValidateAccessToken(token)
 		if err != nil {
 			logger.Warn("invalid token",
 				zap.Error(err),
 				zap.String("method", info.FullMethod),
-				zap.Int("token_length", len(token)),
 			)
 			return nil, status.Error(codes.Unauthenticated, "invalid token")
 		}
@@ -400,8 +392,7 @@ func AuthInterceptor(validator JWTValidator, cfg AuthInterceptorConfig) grpc.Una
 		logger.Debug("token validated successfully",
 			zap.String("method", info.FullMethod),
 			zap.Int64("user_id", claims.UserID),
-			zap.String("phone", claims.Phone),
-			zap.String("device_id", claims.DeviceID),
+			zap.String("phone", logger.MaskPhone(claims.Phone)),
 		)
 
 		// Add auth info to context

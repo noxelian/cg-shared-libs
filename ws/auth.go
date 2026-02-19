@@ -45,18 +45,37 @@ func (a *Authenticator) ExtractUserID(r *http.Request) (int64, error) {
 	return claims.UserID, nil
 }
 
-// ExtractToken extracts JWT token from request (query param or header)
+// ExtractToken extracts JWT token from request.
+// Priority order (most secure first):
+//  1. Sec-WebSocket-Protocol header with "access_token" subprotocol
+//  2. Authorization: Bearer header
+//  3. Query parameter "token" (deprecated - tokens may appear in access logs)
 func ExtractToken(r *http.Request) string {
-	// Get token from query parameter
-	tokenStr := r.URL.Query().Get("token")
-	if tokenStr != "" {
-		return tokenStr
+	// 1. Sec-WebSocket-Protocol: access_token, <JWT>
+	// This is the recommended way for WebSocket auth (no URL exposure)
+	protocols := r.Header.Get("Sec-WebSocket-Protocol")
+	if protocols != "" {
+		for _, part := range strings.Split(protocols, ",") {
+			p := strings.TrimSpace(part)
+			if p != "access_token" && p != "" {
+				return p
+			}
+		}
 	}
 
-	// Try Authorization header as fallback
+	// 2. Authorization header
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
 		return strings.TrimPrefix(authHeader, "Bearer ")
+	}
+
+	// 3. Query parameter (deprecated - tokens appear in server access logs)
+	tokenStr := r.URL.Query().Get("token")
+	if tokenStr != "" {
+		logger.Warn("websocket auth via query param is deprecated, use Sec-WebSocket-Protocol header",
+			zap.String("remote_addr", r.RemoteAddr),
+		)
+		return tokenStr
 	}
 
 	return ""

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -131,6 +132,30 @@ func WithSessionID(ctx context.Context, sessionID string) context.Context {
 func WithTransactionID(ctx context.Context, txnID string) context.Context {
 	l := WithContext(ctx).With(zap.String("transaction_id", txnID))
 	return ToContext(ctx, l)
+}
+
+// WithTraceID extracts trace_id and span_id from the OpenTelemetry span context
+// and injects them into the logger stored in ctx. If no valid span exists, ctx is returned unchanged.
+func WithTraceID(ctx context.Context) context.Context {
+	span := trace.SpanFromContext(ctx)
+	sc := span.SpanContext()
+	if !sc.IsValid() {
+		return ctx
+	}
+	l := WithContext(ctx).With(
+		zap.String("trace_id", sc.TraceID().String()),
+		zap.String("span_id", sc.SpanID().String()),
+	)
+	return ToContext(ctx, l)
+}
+
+// MaskPhone masks a phone number for secure logging.
+// Example: +79001234567 -> +7***4567
+func MaskPhone(phone string) string {
+	if len(phone) <= 4 {
+		return "****"
+	}
+	return phone[:2] + "***" + phone[len(phone)-4:]
 }
 
 // Convenience methods
