@@ -3,6 +3,7 @@ package tracing
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"gitlab.com/xakpro/cg-shared-libs/logger"
@@ -16,7 +17,6 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Config holds OpenTelemetry configuration
@@ -54,12 +54,18 @@ func Init(ctx context.Context, cfg Config) (func(), error) {
 	// Create OTLP exporter
 	otlpEndpoint := cfg.OTLPEndpoint
 	if otlpEndpoint == "" {
-		otlpEndpoint = "localhost:4317" // default OTLP gRPC endpoint
+		otlpEndpoint = "localhost:4317"
+	}
+
+	// Build endpoint URL: WithEndpointURL expects "http://host:port"
+	endpointURL := otlpEndpoint
+	if !strings.HasPrefix(endpointURL, "http://") && !strings.HasPrefix(endpointURL, "https://") {
+		endpointURL = "http://" + endpointURL
 	}
 
 	exporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(otlpEndpoint),
-		otlptracegrpc.WithTLSCredentials(insecure.NewCredentials()),
+		otlptracegrpc.WithEndpointURL(endpointURL),
+		otlptracegrpc.WithInsecure(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OTLP exporter: %w", err)
