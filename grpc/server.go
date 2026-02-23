@@ -93,8 +93,9 @@ func NewServer(cfg ServerConfig, opts ...grpc.ServerOption) (*Server, error) {
 		),
 	}
 
-	// User opts come first, then defaults (so defaults can override user opts if needed)
-	// Actually, we want defaults first, then user opts can override
+	// WARNING: gRPC silently overwrites if multiple ChainUnaryInterceptor
+	// options are provided. Callers that need extra interceptors should use
+	// NewServerWithInterceptors instead.
 	allOpts := append(defaultOpts, opts...)
 	server := grpc.NewServer(allOpts...)
 
@@ -102,6 +103,93 @@ func NewServer(cfg ServerConfig, opts ...grpc.ServerOption) (*Server, error) {
 		zap.String("addr", cfg.Addr()),
 		zap.Int("applied_max_recv_msg_size", maxRecvMsgSize),
 		zap.Int("applied_max_send_msg_size", maxSendMsgSize),
+	)
+
+	return &Server{
+		server: server,
+		config: cfg,
+	}, nil
+}
+
+// NewServerWithInterceptors creates a gRPC server with additional unary and
+// stream interceptors merged into a single chain alongside the default ones
+// (recovery, logging, timeout). This avoids the gRPC limitation where multiple
+// ChainUnaryInterceptor options silently overwrite each other.
+//
+// Usage:
+//
+//	srv, err := grpc.NewServerWithInterceptors(cfg,
+//	    []grpc.UnaryServerInterceptor{authInterceptor, metricsInterceptor},
+//	    tracing.StreamServerInterceptors(),
+//	    tracing.GRPCServerInterceptors()...,
+//	)
+func NewServerWithInterceptors(
+	cfg ServerConfig,
+	unaryInterceptors []grpc.UnaryServerInterceptor,
+	streamInterceptors []grpc.StreamServerInterceptor,
+	opts ...grpc.ServerOption,
+) (*Server, error) {
+	maxRecvMsgSize := cfg.MaxRecvMsgSize
+	if maxRecvMsgSize == 0 {
+		maxRecvMsgSize = 4194304
+	}
+	maxSendMsgSize := cfg.MaxSendMsgSize
+	if maxSendMsgSize == 0 {
+		maxSendMsgSize = 4194304
+	}
+
+	logger.Info("gRPC server configuration",
+		zap.String("host", cfg.Host),
+		zap.Int("port", cfg.Port),
+		zap.Int("max_recv_msg_size", maxRecvMsgSize),
+		zap.Int("max_send_msg_size", maxSendMsgSize),
+		zap.Int("connection_limit", cfg.ConnectionLimit),
+		zap.Duration("timeout", cfg.Timeout),
+		zap.String("addr", cfg.Addr()),
+	)
+
+	// Build merged interceptor chain: defaults first, then caller's
+	allUnary := []grpc.UnaryServerInterceptor{
+		recoveryInterceptor(),
+		loggingInterceptor(),
+		timeoutInterceptor(cfg.Timeout),
+	}
+	allUnary = append(allUnary, unaryInterceptors...)
+
+	allOpts := []grpc.ServerOption{
+		grpc.MaxRecvMsgSize(maxRecvMsgSize),
+		grpc.MaxSendMsgSize(maxSendMsgSize),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             30 * time.Second,
+			PermitWithoutStream: true,
+		}),
+		grpc.ChainUnaryInterceptor(allUnary...),
+	}
+
+	if len(streamInterceptors) > 0 {
+		allOpts = append(allOpts, grpc.ChainStreamInterceptor(streamInterceptors...))
+	}
+
+	// TLS
+	if cfg.TLS.Enabled {
+		creds, err := cfg.TLS.ServerCredentials()
+		if err != nil {
+			return nil, fmt.Errorf("server TLS credentials: %w", err)
+		}
+		if creds != nil {
+			allOpts = append(allOpts, grpc.Creds(creds))
+		}
+	}
+
+	// Append caller's extra options (StatsHandler, etc.)
+	allOpts = append(allOpts, opts...)
+
+	server := grpc.NewServer(allOpts...)
+
+	logger.Info("gRPC server created successfully",
+		zap.String("addr", cfg.Addr()),
+		zap.Int("unary_interceptors", len(allUnary)),
+		zap.Int("stream_interceptors", len(streamInterceptors)),
 	)
 
 	return &Server{

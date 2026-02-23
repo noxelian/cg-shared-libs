@@ -9,6 +9,7 @@ import (
 
 	"github.com/segmentio/kafka-go"
 	"gitlab.com/xakpro/cg-shared-libs/logger"
+	"gitlab.com/xakpro/cg-shared-libs/metrics"
 	"go.uber.org/zap"
 )
 
@@ -135,6 +136,8 @@ func (p *Producer) Publish(ctx context.Context, key string, event Event) error {
 		return fmt.Errorf("write message: %w", err)
 	}
 
+	metrics.RecordKafkaMessageProduced(p.topic)
+
 	logger.Debug("Event published",
 		zap.String("topic", p.topic),
 		zap.String("key", key),
@@ -157,7 +160,12 @@ func (p *Producer) PublishJSON(ctx context.Context, key string, data any) error 
 		Time:  time.Now(),
 	}
 
-	return p.writer.WriteMessages(ctx, msg)
+	if err := p.writer.WriteMessages(ctx, msg); err != nil {
+		return err
+	}
+
+	metrics.RecordKafkaMessageProduced(p.topic)
+	return nil
 }
 
 // Close closes the producer
@@ -171,8 +179,9 @@ func (p *Producer) Close() error {
 
 // Consumer wraps kafka.Reader
 type Consumer struct {
-	reader *kafka.Reader
-	topic  string
+	reader  *kafka.Reader
+	topic   string
+	groupID string
 }
 
 // NewConsumer creates a new Kafka consumer
@@ -193,8 +202,9 @@ func NewConsumer(cfg Config, topic string) *Consumer {
 	)
 
 	return &Consumer{
-		reader: reader,
-		topic:  topic,
+		reader:  reader,
+		topic:   topic,
+		groupID: cfg.GroupID,
 	}
 }
 
@@ -229,6 +239,8 @@ func (c *Consumer) Consume(ctx context.Context, handler MessageHandler) error {
 
 			if err := c.reader.CommitMessages(ctx, msg); err != nil {
 				logger.Error("commit message failed", zap.Error(err))
+			} else {
+				metrics.RecordKafkaMessageConsumed(c.topic, c.groupID)
 			}
 		}
 	}

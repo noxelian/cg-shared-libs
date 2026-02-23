@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"gitlab.com/xakpro/cg-shared-libs/logger"
+	"gitlab.com/xakpro/cg-shared-libs/metrics"
 	"go.uber.org/zap"
 )
 
@@ -59,6 +60,8 @@ func NewDatabase(ctx context.Context, cfg Config, replicaCfg *ReplicaPoolConfig)
 // Implements Database interface for backward compatibility
 type Pool struct {
 	*pgxpool.Pool
+	dbName    string
+	cancelFn  context.CancelFunc
 }
 
 // New creates a new PostgreSQL connection pool
@@ -92,7 +95,12 @@ func New(ctx context.Context, cfg Config) (*Pool, error) {
 		zap.String("database", cfg.Database),
 	)
 
-	return &Pool{Pool: pool}, nil
+	metricsCtx, cancel := context.WithCancel(context.Background())
+	dbLabel := fmt.Sprintf("%s@%s:%d", cfg.Database, cfg.Host, cfg.Port)
+	p := &Pool{Pool: pool, dbName: dbLabel, cancelFn: cancel}
+	go p.collectPoolMetrics(metricsCtx)
+
+	return p, nil
 }
 
 // Writer returns the pool itself (for backward compatibility with ReplicaPool interface)
@@ -107,9 +115,31 @@ func (p *Pool) Reader() *Pool {
 
 // Close closes the connection pool
 func (p *Pool) Close() {
+	if p.cancelFn != nil {
+		p.cancelFn()
+	}
 	if p.Pool != nil {
 		p.Pool.Close()
 		logger.Info("PostgreSQL connection closed")
+	}
+}
+
+// collectPoolMetrics periodically reports connection pool stats to Prometheus
+func (p *Pool) collectPoolMetrics(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			stat := p.Pool.Stat()
+			metrics.SetDBConnections(p.dbName,
+				int(stat.AcquiredConns()),
+				int(stat.IdleConns()),
+			)
+		}
 	}
 }
 

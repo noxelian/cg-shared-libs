@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gitlab.com/xakpro/cg-shared-libs/logger"
+	"gitlab.com/xakpro/cg-shared-libs/metrics"
 	"go.uber.org/zap"
 )
 
@@ -71,13 +72,15 @@ func New(cfg Config) *CircuitBreaker {
 		cfg.MaxHalfOpenCalls = 3
 	}
 
-	return &CircuitBreaker{
+	cb := &CircuitBreaker{
 		name:             cfg.Name,
 		maxFailures:      cfg.MaxFailures,
 		timeout:          cfg.Timeout,
 		maxHalfOpenCalls: cfg.MaxHalfOpenCalls,
 		state:            StateClosed,
 	}
+	metrics.SetCircuitBreakerState(cb.name, int(StateClosed))
+	return cb
 }
 
 // Execute runs the given function with circuit breaker protection
@@ -134,6 +137,7 @@ func (cb *CircuitBreaker) afterRequest(err error) {
 }
 
 func (cb *CircuitBreaker) onSuccess() {
+	metrics.RecordCircuitBreakerSuccess(cb.name)
 	switch cb.state {
 	case StateClosed:
 		cb.failures = 0
@@ -147,6 +151,7 @@ func (cb *CircuitBreaker) onSuccess() {
 }
 
 func (cb *CircuitBreaker) onFailure() {
+	metrics.RecordCircuitBreakerFailure(cb.name)
 	switch cb.state {
 	case StateClosed:
 		cb.failures++
@@ -165,12 +170,14 @@ func (cb *CircuitBreaker) toClosed() {
 	cb.failures = 0
 	cb.successes = 0
 	cb.halfOpenCalls = 0
+	metrics.SetCircuitBreakerState(cb.name, int(StateClosed))
 	logger.Info("circuit breaker closed", zap.String("name", cb.name))
 }
 
 func (cb *CircuitBreaker) toOpen() {
 	cb.state = StateOpen
 	cb.lastFailureTime = time.Now()
+	metrics.SetCircuitBreakerState(cb.name, int(StateOpen))
 	logger.Warn("circuit breaker opened",
 		zap.String("name", cb.name),
 		zap.Int("failures", cb.failures),
@@ -181,6 +188,7 @@ func (cb *CircuitBreaker) toHalfOpen() {
 	cb.state = StateHalfOpen
 	cb.successes = 0
 	cb.halfOpenCalls = 0
+	metrics.SetCircuitBreakerState(cb.name, int(StateHalfOpen))
 	logger.Info("circuit breaker half-open", zap.String("name", cb.name))
 }
 

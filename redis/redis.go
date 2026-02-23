@@ -9,8 +9,17 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"gitlab.com/xakpro/cg-shared-libs/logger"
+	"gitlab.com/xakpro/cg-shared-libs/metrics"
 	"go.uber.org/zap"
 )
+
+func recordOp(op string, err error) {
+	if err != nil && !errors.Is(err, redis.Nil) {
+		metrics.RecordRedisOperation(op, "error")
+	} else {
+		metrics.RecordRedisOperation(op, "success")
+	}
+}
 
 // Config holds Redis connection configuration
 type Config struct {
@@ -76,12 +85,15 @@ func (c *Client) SetJSON(ctx context.Context, key string, value any, expiration 
 	if err != nil {
 		return fmt.Errorf("marshal value: %w", err)
 	}
-	return c.Set(ctx, key, data, expiration).Err()
+	err = c.Set(ctx, key, data, expiration).Err()
+	recordOp("set_json", err)
+	return err
 }
 
 // GetJSON gets a value and unmarshals from JSON
 func (c *Client) GetJSON(ctx context.Context, key string, dest any) error {
 	data, err := c.Get(ctx, key).Bytes()
+	recordOp("get_json", err)
 	if err != nil {
 		return err
 	}
@@ -94,12 +106,15 @@ func (c *Client) SetJSONNX(ctx context.Context, key string, value any, expiratio
 	if err != nil {
 		return false, fmt.Errorf("marshal value: %w", err)
 	}
-	return c.SetNX(ctx, key, data, expiration).Result()
+	result, err := c.SetNX(ctx, key, data, expiration).Result()
+	recordOp("set_json_nx", err)
+	return result, err
 }
 
 // Exists checks if key exists
 func (c *Client) KeyExists(ctx context.Context, key string) (bool, error) {
 	n, err := c.Exists(ctx, key).Result()
+	recordOp("exists", err)
 	if err != nil {
 		return false, err
 	}
@@ -111,22 +126,28 @@ func (c *Client) DeletePattern(ctx context.Context, pattern string) error {
 	iter := c.Scan(ctx, 0, pattern, 100).Iterator()
 	for iter.Next(ctx) {
 		if err := c.Del(ctx, iter.Val()).Err(); err != nil {
+			recordOp("delete_pattern", err)
 			return err
 		}
 	}
-	return iter.Err()
+	err := iter.Err()
+	recordOp("delete_pattern", err)
+	return err
 }
 
 // Counter operations for counter-service
 
 // IncrCounter increments a hash field atomically
 func (c *Client) IncrCounter(ctx context.Context, key, field string, delta int64) (int64, error) {
-	return c.HIncrBy(ctx, key, field, delta).Result()
+	result, err := c.HIncrBy(ctx, key, field, delta).Result()
+	recordOp("incr", err)
+	return result, err
 }
 
 // GetCounters gets all counters for a key
 func (c *Client) GetCounters(ctx context.Context, key string) (map[string]int64, error) {
 	result, err := c.HGetAll(ctx, key).Result()
+	recordOp("get_counters", err)
 	if err != nil {
 		return nil, err
 	}
@@ -142,29 +163,39 @@ func (c *Client) GetCounters(ctx context.Context, key string) (map[string]int64,
 
 // SetCounter sets a specific counter value
 func (c *Client) SetCounter(ctx context.Context, key, field string, value int64) error {
-	return c.HSet(ctx, key, field, value).Err()
+	err := c.HSet(ctx, key, field, value).Err()
+	recordOp("set", err)
+	return err
 }
 
 // GetCounter gets a specific counter value
 func (c *Client) GetCounter(ctx context.Context, key, field string) (int64, error) {
-	return c.HGet(ctx, key, field).Int64()
+	result, err := c.HGet(ctx, key, field).Int64()
+	recordOp("get", err)
+	return result, err
 }
 
 // DeleteCounter deletes a hash field
 func (c *Client) DeleteCounter(ctx context.Context, key, field string) error {
-	return c.HDel(ctx, key, field).Err()
+	err := c.HDel(ctx, key, field).Err()
+	recordOp("delete", err)
+	return err
 }
 
 // SetCounterExpire sets expiration on a counter key
 func (c *Client) SetCounterExpire(ctx context.Context, key string, expiration time.Duration) error {
-	return c.Expire(ctx, key, expiration).Err()
+	err := c.Expire(ctx, key, expiration).Err()
+	recordOp("expire", err)
+	return err
 }
 
 // Lock operations for distributed locking
 
 // Lock acquires a distributed lock
 func (c *Client) Lock(ctx context.Context, key string, value string, expiration time.Duration) (bool, error) {
-	return c.SetNX(ctx, key, value, expiration).Result()
+	result, err := c.SetNX(ctx, key, value, expiration).Result()
+	recordOp("lock", err)
+	return result, err
 }
 
 // Unlock releases a distributed lock
@@ -176,7 +207,9 @@ func (c *Client) Unlock(ctx context.Context, key string, value string) error {
 			return 0
 		end
 	`)
-	return script.Run(ctx, c.Client, []string{key}, value).Err()
+	err := script.Run(ctx, c.Client, []string{key}, value).Err()
+	recordOp("unlock", err)
+	return err
 }
 
 // IsNil checks if error is redis.Nil
