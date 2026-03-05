@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"gitlab.com/xakpro/cg-shared-libs/logger"
 	"go.uber.org/zap"
 )
@@ -118,9 +118,9 @@ func (l *Limiter) allowN(ctx context.Context, key string, n int) (Result, error)
 	countCmd := pipe.ZCard(ctx, fullKey)
 
 	// Add new request(s)
-	members := make([]*redis.Z, n)
+	members := make([]redis.Z, n)
 	for i := 0; i < n; i++ {
-		members[i] = &redis.Z{
+		members[i] = redis.Z{
 			Score:  float64(now.UnixNano() + int64(i)),
 			Member: fmt.Sprintf("%d-%d", now.UnixNano(), i),
 		}

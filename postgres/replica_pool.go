@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,7 +41,8 @@ type ReplicaPool struct {
 }
 
 type replicaConn struct {
-	pool    *Pool
+	pool *Pool
+	mu   sync.RWMutex
 	healthy bool
 	lag     time.Duration
 }
@@ -162,7 +164,10 @@ func (rp *ReplicaPool) Close() {
 func (rp *ReplicaPool) healthyReplicas() []*replicaConn {
 	healthy := make([]*replicaConn, 0, len(rp.replicas))
 	for _, r := range rp.replicas {
-		if r.healthy && r.lag <= rp.config.MaxReplicaLag {
+		r.mu.RLock()
+		isHealthy := r.healthy && r.lag <= rp.config.MaxReplicaLag
+		r.mu.RUnlock()
+		if isHealthy {
 			healthy = append(healthy, r)
 		}
 	}
@@ -176,9 +181,17 @@ func (rp *ReplicaPool) leastLagReplica(replicas []*replicaConn) *replicaConn {
 	}
 
 	least := replicas[0]
+	least.mu.RLock()
+	leastLag := least.lag
+	least.mu.RUnlock()
+
 	for _, r := range replicas[1:] {
-		if r.lag < least.lag {
+		r.mu.RLock()
+		rLag := r.lag
+		r.mu.RUnlock()
+		if rLag < leastLag {
 			least = r
+			leastLag = rLag
 		}
 	}
 	return least
@@ -205,7 +218,9 @@ func (rp *ReplicaPool) checkReplicasHealth(ctx context.Context) {
 		// Check connectivity
 		err := r.pool.Pool.Ping(ctx)
 		if err != nil {
+			r.mu.Lock()
 			r.healthy = false
+			r.mu.Unlock()
 			logger.Warn("Replica health check failed",
 				zap.Int("replica_index", i),
 				zap.Error(err),
@@ -221,13 +236,17 @@ func (rp *ReplicaPool) checkReplicasHealth(ctx context.Context) {
 				zap.Error(err),
 			)
 			// Still mark as healthy if ping succeeded
+			r.mu.Lock()
 			r.healthy = true
 			r.lag = rp.config.MaxReplicaLag // Assume max lag if can't measure
+			r.mu.Unlock()
 			continue
 		}
 
+		r.mu.Lock()
 		r.healthy = true
 		r.lag = lag
+		r.mu.Unlock()
 
 		if lag > rp.config.MaxReplicaLag {
 			logger.Warn("Replica lag exceeds threshold",
@@ -266,10 +285,14 @@ func (rp *ReplicaPool) Stats() ReplicaPoolStats {
 	}
 
 	for i, r := range rp.replicas {
+		r.mu.RLock()
+		healthy := r.healthy
+		lag := r.lag
+		r.mu.RUnlock()
 		stats.Replicas = append(stats.Replicas, ReplicaStats{
 			Index:   i,
-			Healthy: r.healthy,
-			Lag:     r.lag,
+			Healthy: healthy,
+			Lag:     lag,
 			Pool:    poolStats(r.pool.Pool),
 		})
 	}
