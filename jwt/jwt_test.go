@@ -10,7 +10,7 @@ import (
 
 func TestNewManager_Success(t *testing.T) {
 	cfg := Config{
-		SecretKey:       "test-secret-key-32-characters!",
+		SecretKey:       "test-secret-key-exactly-32-chars",
 		AccessTokenTTL:  15 * time.Minute,
 		RefreshTokenTTL: 720 * time.Hour,
 		Issuer:          "test-issuer",
@@ -87,7 +87,7 @@ func TestParse_ValidToken(t *testing.T) {
 func TestParse_ExpiredToken(t *testing.T) {
 	// Create manager with very short TTL
 	cfg := Config{
-		SecretKey:       "test-secret-key-32-characters!",
+		SecretKey:       "test-secret-key-exactly-32-chars",
 		AccessTokenTTL:  1 * time.Millisecond,
 		RefreshTokenTTL: 1 * time.Millisecond,
 		Issuer:          "test-issuer",
@@ -142,7 +142,7 @@ func TestParse_WrongSignature(t *testing.T) {
 
 	// Create manager with different secret
 	cfg := Config{
-		SecretKey:       "different-secret-key-32-chars!!",
+		SecretKey:       "different-secret-key-exactly-32c",
 		AccessTokenTTL:  15 * time.Minute,
 		RefreshTokenTTL: 720 * time.Hour,
 		Issuer:          "test-issuer",
@@ -217,7 +217,7 @@ func TestRefresh_InvalidToken(t *testing.T) {
 func TestRefresh_ExpiredToken(t *testing.T) {
 	// Create manager with very short refresh TTL
 	cfg := Config{
-		SecretKey:       "test-secret-key-32-characters!",
+		SecretKey:       "test-secret-key-exactly-32-chars",
 		AccessTokenTTL:  1 * time.Millisecond,
 		RefreshTokenTTL: 1 * time.Millisecond,
 		Issuer:          "test-issuer",
@@ -324,7 +324,7 @@ func TestTokenExpiration_TableDriven(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := Config{
-				SecretKey:       "test-secret-key-32-characters!",
+				SecretKey:       "test-secret-key-exactly-32-chars",
 				AccessTokenTTL:  tt.accessTokenTTL,
 				RefreshTokenTTL: tt.refreshTokenTTL,
 				Issuer:          "test-issuer",
@@ -466,7 +466,7 @@ func TestGenerateAccessToken_HasAccessType(t *testing.T) {
 
 func createTestManager(t *testing.T) *Manager {
 	cfg := Config{
-		SecretKey:       "test-secret-key-32-characters!",
+		SecretKey:       "test-secret-key-exactly-32-chars",
 		AccessTokenTTL:  15 * time.Minute,
 		RefreshTokenTTL: 720 * time.Hour,
 		Issuer:          "test-issuer",

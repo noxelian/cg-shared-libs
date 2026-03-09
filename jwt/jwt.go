@@ -53,6 +53,9 @@ func NewManager(cfg Config) (*Manager, error) {
 	if cfg.SecretKey == "" {
 		return nil, errors.New("jwt secret key is required")
 	}
+	if len(cfg.SecretKey) < 32 {
+		return nil, fmt.Errorf("jwt: secret key must be at least 32 bytes, got %d", len(cfg.SecretKey))
+	}
 
 	return &Manager{
 		secretKey:       []byte(cfg.SecretKey),
@@ -140,8 +143,7 @@ func (m *Manager) ValidateAccessToken(tokenString string) (*Claims, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Backward compatibility: accept tokens without token_type (pre-migration)
-	if claims.TokenType != "" && claims.TokenType != TokenTypeAccess {
+	if claims.TokenType != TokenTypeAccess {
 		return nil, ErrWrongTokenType
 	}
 	return claims, nil
@@ -153,8 +155,7 @@ func (m *Manager) ValidateRefreshToken(tokenString string) (*Claims, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Backward compatibility: accept tokens without token_type (pre-migration)
-	if claims.TokenType != "" && claims.TokenType != TokenTypeRefresh {
+	if claims.TokenType != TokenTypeRefresh {
 		return nil, ErrWrongTokenType
 	}
 	return claims, nil
