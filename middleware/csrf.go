@@ -418,7 +418,9 @@ func HTTPCSRFMiddleware(store CSRFStore, cfg CSRFConfig, getUserID func(r *http.
 				)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusForbidden)
-				w.Write([]byte(`{"error":"csrf_validation_failed","message":"CSRF token validation failed. Please refresh the page and try again."}`))
+				if _, err := w.Write([]byte(`{"error":"csrf_validation_failed","message":"CSRF token validation failed. Please refresh the page and try again."}`)); err != nil {
+					return
+				}
 				return
 			}
 

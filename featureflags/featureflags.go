@@ -203,7 +203,11 @@ func (m *Manager) cacheGet(key string) (bool, bool) {
 		return false, false
 	}
 
-	entry := raw.(cacheEntry)
+	entry, ok2 := raw.(cacheEntry)
+	if !ok2 {
+		m.cache.Delete(key)
+		return false, false
+	}
 	if m.nowFunc().After(entry.expiresAt) {
 		m.cache.Delete(key)
 		return false, false

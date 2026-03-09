@@ -155,7 +155,9 @@ func (c *Client) GetCounters(ctx context.Context, key string) (map[string]int64,
 	counters := make(map[string]int64, len(result))
 	for k, v := range result {
 		var val int64
-		fmt.Sscanf(v, "%d", &val)
+		if _, err := fmt.Sscanf(v, "%d", &val); err != nil {
+			return nil, fmt.Errorf("parse counter %q: %w", k, err)
+		}
 		counters[k] = val
 	}
 	return counters, nil

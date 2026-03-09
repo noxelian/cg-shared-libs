@@ -127,7 +127,9 @@ func WebSocketRateLimitMiddleware(limiter *ratelimit.MultiLimiter, extractUserID
 				w.Header().Set("Retry-After", strconv.FormatInt(int64(result.ResetAfter.Seconds()), 10))
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusTooManyRequests)
-				w.Write([]byte(`{"error":"rate_limit_exceeded","message":"Too many WebSocket connections. Please try again later."}`))
+				if _, err := w.Write([]byte(`{"error":"rate_limit_exceeded","message":"Too many WebSocket connections. Please try again later."}`)); err != nil {
+					return
+				}
 				return
 			}
 
@@ -178,7 +180,9 @@ func HTTPRateLimitMiddleware(limiter *ratelimit.MultiLimiter, tier string, extra
 				w.Header().Set("Retry-After", strconv.FormatInt(int64(result.ResetAfter.Seconds()), 10))
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusTooManyRequests)
-				w.Write([]byte(`{"error":"rate_limit_exceeded","message":"Too many requests. Please try again later."}`))
+				if _, err := w.Write([]byte(`{"error":"rate_limit_exceeded","message":"Too many requests. Please try again later."}`)); err != nil {
+					return
+				}
 				return
 			}
 
