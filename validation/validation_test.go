@@ -392,3 +392,197 @@ func TestValidator_ValidatePositive(t *testing.T) {
 	v.ValidatePositive("count", -1)
 	assert.True(t, v.HasErrors())
 }
+
+func TestValidator_ValidateCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		field    string
+		value    string
+		required bool
+		hasError bool
+	}{
+		{name: "valid code required", field: "code", value: "ABC123", required: true, hasError: false},
+		{name: "empty code required", field: "code", value: "", required: true, hasError: true},
+		{name: "empty code optional", field: "code", value: "", required: false, hasError: false},
+		{name: "code too long", field: "code", value: "12345678901", required: false, hasError: true},
+		{name: "code at limit", field: "code", value: "1234567890", required: true, hasError: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := NewValidator()
+			v.ValidateCode(tt.field, tt.value, tt.required)
+			assert.Equal(t, tt.hasError, v.HasErrors())
+		})
+	}
+}
+
+func TestValidator_ValidateMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		field    string
+		value    string
+		required bool
+		hasError bool
+	}{
+		{name: "valid message required", field: "msg", value: "Hello world", required: true, hasError: false},
+		{name: "empty message required", field: "msg", value: "", required: true, hasError: true},
+		{name: "empty message optional", field: "msg", value: "", required: false, hasError: false},
+		{name: "message too long", field: "msg", value: strings.Repeat("x", 10001), required: false, hasError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := NewValidator()
+			v.ValidateMessage(tt.field, tt.value, tt.required)
+			assert.Equal(t, tt.hasError, v.HasErrors())
+		})
+	}
+}
+
+func TestValidator_ValidateAddress(t *testing.T) {
+	v := NewValidator()
+	v.ValidateAddress("address", "123 Main St")
+	assert.False(t, v.HasErrors())
+
+	v = NewValidator()
+	v.ValidateAddress("address", strings.Repeat("x", 501))
+	assert.True(t, v.HasErrors())
+
+	v = NewValidator()
+	v.ValidateAddress("address", "")
+	assert.False(t, v.HasErrors())
+}
+
+func TestValidator_ValidateURL(t *testing.T) {
+	v := NewValidator()
+	v.ValidateURL("website", "https://example.com")
+	assert.False(t, v.HasErrors())
+
+	v = NewValidator()
+	v.ValidateURL("website", strings.Repeat("x", 2001))
+	assert.True(t, v.HasErrors())
+
+	v = NewValidator()
+	v.ValidateURL("website", "")
+	assert.False(t, v.HasErrors())
+}
+
+func TestValidator_GRPCError(t *testing.T) {
+	v := NewValidator()
+	assert.Nil(t, v.GRPCError())
+
+	v = NewValidator()
+	v.ValidateRequired("name", "")
+	err := v.GRPCError()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "name")
+}
+
+func TestValidator_ValidatePositiveID(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    int64
+		hasError bool
+	}{
+		{name: "positive value", value: 1, hasError: false},
+		{name: "large positive", value: 999999, hasError: false},
+		{name: "zero", value: 0, hasError: true},
+		{name: "negative", value: -1, hasError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := NewValidator()
+			v.ValidatePositiveID("id", tt.value)
+			assert.Equal(t, tt.hasError, v.HasErrors())
+		})
+	}
+}
+
+func TestValidator_ValidatePageSize(t *testing.T) {
+	tests := []struct {
+		name     string
+		page     int32
+		pageSize int32
+		maxSize  int32
+		hasError bool
+	}{
+		{name: "valid page and size", page: 0, pageSize: 10, maxSize: 100, hasError: false},
+		{name: "negative page", page: -1, pageSize: 10, maxSize: 100, hasError: true},
+		{name: "page size too small", page: 0, pageSize: 0, maxSize: 100, hasError: true},
+		{name: "page size too large", page: 0, pageSize: 101, maxSize: 100, hasError: true},
+		{name: "page size at max", page: 0, pageSize: 100, maxSize: 100, hasError: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := NewValidator()
+			v.ValidatePageSize(tt.page, tt.pageSize, tt.maxSize)
+			assert.Equal(t, tt.hasError, v.HasErrors())
+		})
+	}
+}
+
+func TestValidator_ValidateAmount(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    float64
+		hasError bool
+	}{
+		{name: "positive amount", value: 100.50, hasError: false},
+		{name: "zero amount", value: 0, hasError: true},
+		{name: "negative amount", value: -10, hasError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := NewValidator()
+			v.ValidateAmount("price", tt.value)
+			assert.Equal(t, tt.hasError, v.HasErrors())
+		})
+	}
+}
+
+func TestValidator_Error_NoErrors(t *testing.T) {
+	v := NewValidator()
+	assert.Nil(t, v.Error())
+}
+
+func TestValidator_Error_ReturnsFirst(t *testing.T) {
+	v := NewValidator()
+	v.ValidateRequired("name", "")
+	v.ValidateRequired("email", "")
+
+	err := v.Error()
+	require.NotNil(t, err)
+	assert.Contains(t, err.Error(), "name")
+}
+
+func TestValidator_ValidateName_OptionalEmpty(t *testing.T) {
+	v := NewValidator()
+	v.ValidateName("name", "", false)
+	assert.False(t, v.HasErrors())
+}
+
+func TestValidator_ValidateName_OptionalTooLong(t *testing.T) {
+	v := NewValidator()
+	v.ValidateName("name", strings.Repeat("a", 256), false)
+	assert.True(t, v.HasErrors())
+}
+
+func TestValidator_ErrorString_NoErrors(t *testing.T) {
+	v := NewValidator()
+	assert.Empty(t, v.ErrorString())
+}
+
+func TestValidator_ErrorString_MultipleErrors(t *testing.T) {
+	v := NewValidator()
+	v.ValidateRequired("name", "")
+	v.ValidateRequired("email", "")
+
+	errStr := v.ErrorString()
+	assert.Contains(t, errStr, "name")
+	assert.Contains(t, errStr, "email")
+	assert.Contains(t, errStr, "; ")
+}
