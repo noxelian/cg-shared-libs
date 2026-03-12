@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunMigrations_ContextCancellation(t *testing.T) {
@@ -94,5 +96,5 @@ func TestRunMigrations_DefaultTimeout(t *testing.T) {
 	
 	// We expect an error (connection failure or path issue), but not a panic
 	// The important thing is that context handling works
-	_ = err // Error is expected in test environment
+	require.Error(t, err, "expected error when connecting to non-existent database")
 }
