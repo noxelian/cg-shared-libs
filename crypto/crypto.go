@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -41,6 +42,7 @@ type Config struct {
 // uses a unique nonce (which we generate via crypto/rand).
 type Encryptor struct {
 	gcm     cipher.AEAD
+	hashKey []byte // derived key for HMAC-SHA-256 lookups
 	enabled bool
 }
 
@@ -60,8 +62,15 @@ func NewEncryptor(key []byte) (*Encryptor, error) {
 		return nil, fmt.Errorf("crypto: failed to create GCM: %w", err)
 	}
 
+	// Derive a separate HMAC key from the encryption key so we never
+	// reuse the same key material for two different cryptographic purposes.
+	// hashKey = SHA-256("hmac-key:" + hex(encryptionKey))
+	hashInput := "hmac-key:" + hex.EncodeToString(key)
+	derived := sha256.Sum256([]byte(hashInput))
+
 	return &Encryptor{
 		gcm:     gcm,
+		hashKey: derived[:],
 		enabled: true,
 	}, nil
 }

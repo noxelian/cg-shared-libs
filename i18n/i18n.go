@@ -83,6 +83,12 @@ func (t *Translator) LoadDefaults() {
 		"document_not_found": "Документ не найден",
 		"reminder_not_found": "Напоминание не найдено",
 		"service_record_not_found": "Запись о сервисе не найдена",
+		"photo_not_found":          "Фото не найдено",
+
+		// NSI errors
+		"mark_id_required":  "Укажите ID марки",
+		"model_id_required": "Укажите ID модели",
+		"platform_required": "Укажите платформу (ios, android)",
 
 		// Organization errors
 		"organization_not_found": "Организация не найдена",
@@ -123,6 +129,10 @@ func (t *Translator) LoadDefaults() {
 		"mark_required":      "Автокөлік маркасын таңдаңыз",
 		"model_required":     "Автокөлік моделін таңдаңыз",
 		"year_required":      "Шығарылған жылын көрсетіңіз",
+		"photo_not_found":    "Фото табылмады",
+		"mark_id_required":   "Марка ID көрсетіңіз",
+		"model_id_required":  "Модель ID көрсетіңіз",
+		"platform_required":  "Платформаны көрсетіңіз (ios, android)",
 	})
 
 	// English
@@ -164,6 +174,12 @@ func (t *Translator) LoadDefaults() {
 		"document_not_found": "Document not found",
 		"reminder_not_found": "Reminder not found",
 		"service_record_not_found": "Service record not found",
+		"photo_not_found":          "Photo not found",
+
+		// NSI errors
+		"mark_id_required":  "Mark ID is required",
+		"model_id_required": "Model ID is required",
+		"platform_required": "Platform is required (ios, android)",
 
 		// Organization errors
 		"organization_not_found": "Organization not found",
