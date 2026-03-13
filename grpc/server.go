@@ -349,7 +349,6 @@ func GetMetadata(ctx context.Context, key string) string {
 	value := values[0]
 	logger.Debug("metadata extracted",
 		zap.String("key", key),
-		zap.String("value", value),
 	)
 	return value
 }

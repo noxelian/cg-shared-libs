@@ -34,6 +34,18 @@ func TestNewManager_EmptySecretKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "secret key is required")
 }
 
+func TestNewManager_ShortSecretKey(t *testing.T) {
+	cfg := Config{
+		SecretKey: "short-key-only-31-characters!!", // 31 bytes
+	}
+
+	manager, err := NewManager(cfg)
+
+	assert.Error(t, err)
+	assert.Nil(t, manager)
+	assert.Contains(t, err.Error(), "at least 32 bytes")
+}
+
 func TestGenerateTokenPair_Success(t *testing.T) {
 	manager := createTestManager(t)
 
@@ -163,7 +175,8 @@ func TestParse_WrongSignature(t *testing.T) {
 func TestValidateAccessToken_Success(t *testing.T) {
 	manager := createTestManager(t)
 
-	pair, _ := manager.GenerateTokenPair(123, "+77001234567", "device-001")
+	pair, err := manager.GenerateTokenPair(123, "+77001234567", "device-001")
+	require.NoError(t, err)
 
 	claims, err := manager.ValidateAccessToken(pair.AccessToken)
 
@@ -174,7 +187,8 @@ func TestValidateAccessToken_Success(t *testing.T) {
 func TestValidateRefreshToken_Success(t *testing.T) {
 	manager := createTestManager(t)
 
-	pair, _ := manager.GenerateTokenPair(123, "+77001234567", "device-001")
+	pair, err := manager.GenerateTokenPair(123, "+77001234567", "device-001")
+	require.NoError(t, err)
 
 	claims, err := manager.ValidateRefreshToken(pair.RefreshToken)
 
@@ -358,46 +372,58 @@ func TestParse_TokenWithUnexpectedSigningMethod(t *testing.T) {
 
 func TestConcurrentTokenGeneration(t *testing.T) {
 	manager := createTestManager(t)
-	done := make(chan bool)
 
-	// Generate tokens concurrently
+	type result struct {
+		token string
+		err   error
+	}
+	results := make(chan result, 100)
+
 	for i := 0; i < 100; i++ {
 		go func(userID int64) {
 			pair, err := manager.GenerateTokenPair(userID, "+77001234567", "device")
-			assert.NoError(t, err)
-			assert.NotEmpty(t, pair.AccessToken)
-			done <- true
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			results <- result{token: pair.AccessToken}
 		}(int64(i))
 	}
 
-	// Wait for all goroutines
 	for i := 0; i < 100; i++ {
-		<-done
+		r := <-results
+		require.NoError(t, r.err)
+		assert.NotEmpty(t, r.token)
 	}
 }
 
 func TestConcurrentTokenParsing(t *testing.T) {
 	manager := createTestManager(t)
 
-	// Generate a token
 	pair, err := manager.GenerateTokenPair(123, "+77001234567", "device-001")
 	require.NoError(t, err)
 
-	done := make(chan bool)
+	type result struct {
+		userID int64
+		err    error
+	}
+	results := make(chan result, 100)
 
-	// Parse token concurrently
 	for i := 0; i < 100; i++ {
 		go func() {
 			claims, err := manager.Parse(pair.AccessToken)
-			assert.NoError(t, err)
-			assert.Equal(t, int64(123), claims.UserID)
-			done <- true
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			results <- result{userID: claims.UserID}
 		}()
 	}
 
-	// Wait for all goroutines
 	for i := 0; i < 100; i++ {
-		<-done
+		r := <-results
+		require.NoError(t, r.err)
+		assert.Equal(t, int64(123), r.userID)
 	}
 }
 

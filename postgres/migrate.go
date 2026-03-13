@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -27,7 +28,12 @@ import (
 //   - Log detailed information about the migration process
 func RunMigrations(ctx context.Context, cfg Config, migrationsPath string) error {
 	// Create context with timeout if not already set
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	var cancel context.CancelFunc
+	if _, ok := ctx.Deadline(); !ok {
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+	} else {
+		cancel = func() {}
+	}
 	defer cancel()
 
 	// Resolve absolute path
@@ -83,7 +89,7 @@ func RunMigrations(ctx context.Context, cfg Config, migrationsPath string) error
 				logger.Warn("failed to rollback, will try to apply anyway", zap.Error(err))
 			}
 		}
-	} else if err != nil && err != migrate.ErrNilVersion {
+	} else if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
 		return fmt.Errorf("read migration version: %w", err)
 	}
 
@@ -96,7 +102,7 @@ func RunMigrations(ctx context.Context, cfg Config, migrationsPath string) error
 
 	// Apply migrations
 	if err := m.Up(); err != nil {
-		if err == migrate.ErrNoChange {
+		if errors.Is(err, migrate.ErrNoChange) {
 			if wasDirty {
 				logger.Info("PostgreSQL migrations are up to date (dirty state was fixed)",
 					zap.Uint("previous_dirty_version", dirtyVersion),

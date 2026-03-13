@@ -12,9 +12,9 @@ func TestRunMigrations_ContextCancellation(t *testing.T) {
 	cfg := Config{
 		Host:     "localhost",
 		Port:     5432,
-		User:     "test",
-		Password: "test",
-		Database: "test",
+		User:     "fake_user",
+		Password: "fake_password",
+		Database: "fake_db",
 		SSLMode:  "disable",
 	}
 
@@ -36,9 +36,9 @@ func TestRunMigrations_ContextTimeout(t *testing.T) {
 	cfg := Config{
 		Host:     "localhost",
 		Port:     5432,
-		User:     "test",
-		Password: "test",
-		Database: "test",
+		User:     "fake_user",
+		Password: "fake_password",
+		Database: "fake_db",
 		SSLMode:  "disable",
 	}
 
@@ -59,9 +59,9 @@ func TestRunMigrations_InvalidPath(t *testing.T) {
 	cfg := Config{
 		Host:     "localhost",
 		Port:     5432,
-		User:     "test",
-		Password: "test",
-		Database: "test",
+		User:     "fake_user",
+		Password: "fake_password",
+		Database: "fake_db",
 		SSLMode:  "disable",
 	}
 
@@ -80,9 +80,9 @@ func TestRunMigrations_DefaultTimeout(t *testing.T) {
 	cfg := Config{
 		Host:     "localhost",
 		Port:     5432,
-		User:     "test",
-		Password: "test",
-		Database: "test",
+		User:     "fake_user",
+		Password: "fake_password",
+		Database: "fake_db",
 		SSLMode:  "disable",
 	}
 

@@ -90,7 +90,8 @@ func (m *Manager) GenerateAccessToken(userID int64, phone, deviceID string) (str
 }
 
 func (m *Manager) generateToken(userID int64, phone, deviceID string, ttl time.Duration, tokenType TokenType) (string, time.Time, error) {
-	expiresAt := time.Now().Add(ttl)
+	now := time.Now()
+	expiresAt := now.Add(ttl)
 
 	claims := Claims{
 		UserID:    userID,
@@ -99,7 +100,7 @@ func (m *Manager) generateToken(userID int64, phone, deviceID string, ttl time.D
 		TokenType: tokenType,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			IssuedAt:  jwt.NewNumericDate(now),
 			Issuer:    m.issuer,
 		},
 	}
@@ -107,7 +108,7 @@ func (m *Manager) generateToken(userID int64, phone, deviceID string, ttl time.D
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString(m.secretKey)
 	if err != nil {
-		return "", time.Time{}, err
+		return "", time.Time{}, fmt.Errorf("sign token: %w", err)
 	}
 
 	return tokenString, expiresAt, nil
