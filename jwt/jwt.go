@@ -35,9 +35,10 @@ type Claims struct {
 
 // TokenPair contains access and refresh tokens
 type TokenPair struct {
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	AccessToken      string    `json:"access_token"`
+	RefreshToken     string    `json:"refresh_token"`
+	ExpiresAt        time.Time `json:"expires_at"`         // Access token expiry (sent to client)
+	RefreshExpiresAt time.Time `json:"refresh_expires_at"` // Refresh token expiry (for session storage)
 }
 
 // Manager handles JWT operations
@@ -72,15 +73,16 @@ func (m *Manager) GenerateTokenPair(userID int64, phone, deviceID string) (*Toke
 		return nil, fmt.Errorf("generate access token: %w", err)
 	}
 
-	refreshToken, _, err := m.generateToken(userID, phone, deviceID, m.refreshTokenTTL, TokenTypeRefresh)
+	refreshToken, refreshExpiresAt, err := m.generateToken(userID, phone, deviceID, m.refreshTokenTTL, TokenTypeRefresh)
 	if err != nil {
 		return nil, fmt.Errorf("generate refresh token: %w", err)
 	}
 
 	return &TokenPair{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		ExpiresAt:    expiresAt,
+		AccessToken:      accessToken,
+		RefreshToken:     refreshToken,
+		ExpiresAt:        expiresAt,
+		RefreshExpiresAt: refreshExpiresAt,
 	}, nil
 }
 
