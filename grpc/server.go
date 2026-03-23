@@ -296,13 +296,13 @@ func loggingInterceptor() grpc.UnaryServerInterceptor {
 			logger.Debug("gRPC request completed",
 				zap.String("request_id", requestID),
 				zap.String("method", info.FullMethod),
-				zap.Duration("duration", duration),
+				zap.Int64("duration_ms", duration.Milliseconds()),
 			)
 		} else {
 			logger.Warn("gRPC request failed",
 				zap.String("request_id", requestID),
 				zap.String("method", info.FullMethod),
-				zap.Duration("duration", duration),
+				zap.Int64("duration_ms", duration.Milliseconds()),
 				zap.String("code", code.String()),
 				zap.Error(err),
 			)

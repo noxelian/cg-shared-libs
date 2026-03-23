@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -326,4 +327,74 @@ func TestReadinessHandler_MultipleCheckers_OneFailsReturnUnavailable(t *testing.
 
 	// Readiness requires ALL checks to pass
 	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+}
+
+// ==================== LivenessHandler Tests ====================
+
+func TestLivenessHandler_ReturnsOK_Always(t *testing.T) {
+	h := health.New("v1.0.0")
+	// Register a failing checker — liveness must ignore it
+	h.RegisterChecker(&testChecker{name: "db", err: errors.New("db down")})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	h.LivenessHandler().ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var resp health.Response
+	err := json.NewDecoder(rr.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Equal(t, health.StatusOK, resp.Status)
+	// Liveness MUST NOT run checkers — Checks map must be empty
+	assert.Empty(t, resp.Checks)
+}
+
+func TestLivenessHandler_ResponseContainsUptimeAndVersion(t *testing.T) {
+	h := health.New("v1.24.0")
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	h.LivenessHandler().ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var resp health.Response
+	err := json.NewDecoder(rr.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Equal(t, "v1.24.0", resp.Version)
+	assert.NotEmpty(t, resp.Uptime)
+	assert.NotEmpty(t, resp.Timestamp)
+}
+
+// ==================== KafkaChecker Tests ====================
+
+func TestKafkaChecker_ReachableBroker_ReturnsNil(t *testing.T) {
+	// Start a real TCP listener on a random port
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+
+	checker := health.NewKafkaChecker([]string{ln.Addr().String()}, "kafka")
+	assert.Equal(t, "kafka", checker.Name())
+
+	ctx := context.Background()
+	assert.NoError(t, checker.Check(ctx))
+}
+
+func TestKafkaChecker_UnreachableBroker_ReturnsError(t *testing.T) {
+	// Port 19999 should not be listening
+	checker := health.NewKafkaChecker([]string{"localhost:19999"}, "kafka")
+
+	ctx := context.Background()
+	err := checker.Check(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "kafka broker unreachable")
+}
+
+func TestKafkaChecker_EmptyBrokers_ReturnsNil(t *testing.T) {
+	checker := health.NewKafkaChecker([]string{}, "kafka")
+
+	ctx := context.Background()
+	assert.NoError(t, checker.Check(ctx))
 }

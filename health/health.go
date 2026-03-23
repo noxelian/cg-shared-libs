@@ -146,6 +146,25 @@ func SimpleHandler() http.HandlerFunc {
 	}
 }
 
+// LivenessHandler returns a handler confirming the process is alive.
+// It runs NO checkers — calling this on /healthz prevents cascading
+// Kubernetes restarts caused by transient dependency failures.
+func (h *Health) LivenessHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		response := Response{
+			Status:    StatusOK,
+			Version:   h.version,
+			Uptime:    time.Since(h.startTime).String(),
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			logger.Error("failed to encode liveness response", zap.Error(err))
+		}
+	}
+}
+
 // ReadinessHandler returns readiness check handler
 // Readiness checks if service is ready to accept traffic
 func (h *Health) ReadinessHandler() http.HandlerFunc {

@@ -149,6 +149,23 @@ func WithTraceID(ctx context.Context) context.Context {
 	return ToContext(ctx, l)
 }
 
+// WithServiceName permanently adds a "service" field to the global logger.
+// Call once after Init() in cmd/main.go. Every subsequent log line includes the field.
+func WithServiceName(name string) {
+	if global == nil {
+		InitDefault()
+	}
+	global = global.With(zap.String("service", name))
+	sugar = global.Sugar()
+}
+
+// WithPlatform adds a "platform" field to the context logger.
+// Use where a real platform/channel value is available (cg-ai, cg-bff webhook handlers).
+func WithPlatform(ctx context.Context, platform string) context.Context {
+	l := WithContext(ctx).With(zap.String("platform", platform))
+	return ToContext(ctx, l)
+}
+
 // MaskPhone masks a phone number for secure logging.
 // Example: +79001234567 -> +7***4567
 func MaskPhone(phone string) string {
