@@ -94,6 +94,17 @@ func (t *Translator) LoadDefaults() {
 		"organization_not_found": "Организация не найдена",
 		"already_member":     "Вы уже являетесь участником",
 		"invalid_invite_code": "Неверный код приглашения",
+
+		// Request types
+		"request_type.repair":  "Ремонт",
+		"request_type.parts":   "Запчасти",
+		"request_type.unknown": "Неизвестный тип",
+
+		// Request statuses
+		"request_status.moderation": "На модерации",
+		"request_status.published":  "Активная",
+		"request_status.completed":  "Завершена",
+		"request_status.unknown":    "Неизвестный статус",
 	})
 
 	// Kazakh
@@ -133,6 +144,17 @@ func (t *Translator) LoadDefaults() {
 		"mark_id_required":   "Марка ID көрсетіңіз",
 		"model_id_required":  "Модель ID көрсетіңіз",
 		"platform_required":  "Платформаны көрсетіңіз (ios, android)",
+
+		// Request types
+		"request_type.repair":  "Жөндеу",
+		"request_type.parts":   "Қосалқы бөлшектер",
+		"request_type.unknown": "Белгісіз тип",
+
+		// Request statuses
+		"request_status.moderation": "Модерацияда",
+		"request_status.published":  "Белсенді",
+		"request_status.completed":  "Аяқталған",
+		"request_status.unknown":    "Белгісіз мәртебе",
 	})
 
 	// English
@@ -185,6 +207,17 @@ func (t *Translator) LoadDefaults() {
 		"organization_not_found": "Organization not found",
 		"already_member":     "You are already a member",
 		"invalid_invite_code": "Invalid invite code",
+
+		// Request types
+		"request_type.repair":  "Repair",
+		"request_type.parts":   "Parts",
+		"request_type.unknown": "Unknown type",
+
+		// Request statuses
+		"request_status.moderation": "Under review",
+		"request_status.published":  "Active",
+		"request_status.completed":  "Completed",
+		"request_status.unknown":    "Unknown status",
 	})
 }
 
