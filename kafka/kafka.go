@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -62,6 +63,40 @@ func (ft FlexibleTime) MarshalJSON() ([]byte, error) {
 	return json.Marshal(ft.Time.Format(time.RFC3339))
 }
 
+// UnmarshalError signals that a Kafka message could not be decoded due to a
+// schema mismatch. Returning this from a MessageHandler causes the consumer to:
+//   - log at error level with topic, partition, offset, and error details
+//   - increment the kafka_consumer_unmarshal_errors_total Prometheus counter
+//   - commit the offset (the message will never parse correctly — retrying is pointless)
+//
+// Usage:
+//
+//	if err := json.Unmarshal(msg.Value, &payload); err != nil {
+//	    return kafka.NewUnmarshalError(err)
+//	}
+type UnmarshalError struct {
+	cause error
+}
+
+// NewUnmarshalError wraps an underlying decode error as an UnmarshalError.
+func NewUnmarshalError(cause error) *UnmarshalError {
+	return &UnmarshalError{cause: cause}
+}
+
+func (e *UnmarshalError) Error() string {
+	return fmt.Sprintf("unmarshal error: %v", e.cause)
+}
+
+func (e *UnmarshalError) Unwrap() error {
+	return e.cause
+}
+
+// IsUnmarshalError reports whether err is (or wraps) an *UnmarshalError.
+func IsUnmarshalError(err error) bool {
+	var target *UnmarshalError
+	return errors.As(err, &target)
+}
+
 // Config holds Kafka configuration
 type Config struct {
 	Brokers       []string      `yaml:"brokers" env:"KAFKA_BROKERS" env-default:"localhost:9092"`
@@ -72,6 +107,27 @@ type Config struct {
 	CommitTimeout time.Duration `yaml:"commit_timeout" env:"KAFKA_COMMIT_TIMEOUT" env-default:"5s"`
 	BatchSize     int           `yaml:"batch_size" env:"KAFKA_BATCH_SIZE" env-default:"100"`
 	BatchTimeout  time.Duration `yaml:"batch_timeout" env:"KAFKA_BATCH_TIMEOUT" env-default:"100ms"`
+
+	// Retry / DLQ configuration.
+	//
+	// MaxRetries controls how many times a transient handler error is retried
+	// before the message is considered permanently failed. Default: 5.
+	MaxRetries int `yaml:"max_retries" env:"KAFKA_MAX_RETRIES" env-default:"5"`
+	// BackoffMin is the initial delay before the first retry. Default: 100ms.
+	BackoffMin time.Duration `yaml:"backoff_min" env:"KAFKA_BACKOFF_MIN" env-default:"100ms"`
+	// BackoffMax caps the exponential delay. Default: 30s.
+	BackoffMax time.Duration `yaml:"backoff_max" env:"KAFKA_BACKOFF_MAX" env-default:"30s"`
+	// DLQEnabled, when true, publishes exhausted messages to a dead-letter topic
+	// named "<original_topic>.dlq" instead of simply logging and discarding them.
+	// Opt-in so existing services are not affected by default.
+	DLQEnabled bool `yaml:"dlq_enabled" env:"KAFKA_DLQ_ENABLED" env-default:"false"`
+
+	// ReadBackoffMin is the minimum time the reader waits when the broker has no
+	// new messages before polling again. Increasing this value reduces idle
+	// polling pressure on the broker during consumer catch-up. Default: 100ms.
+	ReadBackoffMin time.Duration `yaml:"read_backoff_min" env:"KAFKA_READ_BACKOFF_MIN" env-default:"100ms"`
+	// ReadBackoffMax caps the read backoff interval. Default: 1s.
+	ReadBackoffMax time.Duration `yaml:"read_backoff_max" env:"KAFKA_READ_BACKOFF_MAX" env-default:"1s"`
 }
 
 // Event represents a domain event
@@ -179,20 +235,24 @@ func (p *Producer) Close() error {
 
 // Consumer wraps kafka.Reader
 type Consumer struct {
-	reader  *kafka.Reader
-	topic   string
-	groupID string
+	reader      *kafka.Reader
+	topic       string
+	groupID     string
+	retryCfg    retryConfig
+	dlqProducer *Producer // nil when DLQ is disabled
 }
 
 // NewConsumer creates a new Kafka consumer
 func NewConsumer(cfg Config, topic string) *Consumer {
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  cfg.Brokers,
-		Topic:    topic,
-		GroupID:  cfg.GroupID,
-		MinBytes: cfg.MinBytes,
-		MaxBytes: cfg.MaxBytes,
-		MaxWait:  cfg.MaxWait,
+		Brokers:        cfg.Brokers,
+		Topic:          topic,
+		GroupID:        cfg.GroupID,
+		MinBytes:       cfg.MinBytes,
+		MaxBytes:       cfg.MaxBytes,
+		MaxWait:        cfg.MaxWait,
+		ReadBackoffMin: cfg.ReadBackoffMin,
+		ReadBackoffMax: cfg.ReadBackoffMax,
 	})
 
 	logger.Info("Kafka consumer created",
@@ -201,17 +261,31 @@ func NewConsumer(cfg Config, topic string) *Consumer {
 		zap.String("group_id", cfg.GroupID),
 	)
 
+	rc := newRetryConfig(cfg)
+
+	var dlqProd *Producer
+	if cfg.DLQEnabled {
+		dlqTopic := topic + ".dlq"
+		dlqProd = NewProducer(cfg, dlqTopic)
+		logger.Info("Kafka DLQ producer created",
+			zap.String("dlq_topic", dlqTopic),
+		)
+	}
+
 	return &Consumer{
-		reader:  reader,
-		topic:   topic,
-		groupID: cfg.GroupID,
+		reader:      reader,
+		topic:       topic,
+		groupID:     cfg.GroupID,
+		retryCfg:    rc,
+		dlqProducer: dlqProd,
 	}
 }
 
 // MessageHandler handles consumed messages
 type MessageHandler func(ctx context.Context, msg kafka.Message) error
 
-// Consume starts consuming messages
+// Consume starts consuming messages with exponential backoff on transient
+// errors and optional dead-letter queue routing when max retries are exhausted.
 func (c *Consumer) Consume(ctx context.Context, handler MessageHandler) error {
 	for {
 		select {
@@ -227,31 +301,40 @@ func (c *Consumer) Consume(ctx context.Context, handler MessageHandler) error {
 				continue
 			}
 
-			if err := handler(ctx, msg); err != nil {
-				logger.Error("handle message failed",
-					zap.Error(err),
+			shouldCommit, handleErr := c.handleWithRetry(ctx, msg, handler)
+
+			if !shouldCommit {
+				// Context cancelled during a backoff sleep.
+				return handleErr
+			}
+
+			if handleErr != nil {
+				// Max-retries exhausted (already logged + DLQ'd inside
+				// handleWithRetry). Commit so we don't replay the poison pill.
+				logger.Error("committing offset after exhausted retries",
+					zap.Error(handleErr),
 					zap.String("topic", c.topic),
 					zap.Int64("offset", msg.Offset),
 				)
-				// Don't commit on error - message will be reprocessed
-				continue
 			}
 
-			if err := c.reader.CommitMessages(ctx, msg); err != nil {
-				logger.Error("commit message failed", zap.Error(err))
-			} else {
+			if cerr := c.reader.CommitMessages(ctx, msg); cerr != nil {
+				logger.Error("commit message failed", zap.Error(cerr))
+			} else if handleErr == nil {
 				metrics.RecordKafkaMessageConsumed(c.topic, c.groupID)
 			}
 		}
 	}
 }
 
-// ConsumeEvent consumes and parses events
+// ConsumeEvent consumes and parses events. If the top-level event envelope
+// cannot be decoded, it returns an UnmarshalError so Consume commits the
+// offset and records the metric rather than retrying indefinitely.
 func (c *Consumer) ConsumeEvent(ctx context.Context, handler func(ctx context.Context, event Event) error) error {
 	return c.Consume(ctx, func(ctx context.Context, msg kafka.Message) error {
 		var event Event
 		if err := json.Unmarshal(msg.Value, &event); err != nil {
-			return fmt.Errorf("unmarshal event: %w", err)
+			return NewUnmarshalError(fmt.Errorf("unmarshal event envelope: %w", err))
 		}
 		return handler(ctx, event)
 	})

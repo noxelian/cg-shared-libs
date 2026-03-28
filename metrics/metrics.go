@@ -254,6 +254,30 @@ var (
 		[]string{"topic", "group"},
 	)
 
+	kafkaUnmarshalErrors = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_consumer_unmarshal_errors_total",
+			Help: "Total number of Kafka messages skipped due to JSON unmarshal errors (schema mismatch)",
+		},
+		[]string{"topic", "consumer_group"},
+	)
+
+	kafkaConsumerRetries = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_consumer_retries_total",
+			Help: "Total number of Kafka message handler retries due to transient errors",
+		},
+		[]string{"topic", "consumer_group"},
+	)
+
+	kafkaDLQTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_consumer_dlq_total",
+			Help: "Total number of Kafka messages sent to the dead-letter queue after max retries",
+		},
+		[]string{"topic", "consumer_group"},
+	)
+
 	// Business metrics
 	activeWebsockets = promauto.NewGauge(
 		prometheus.GaugeOpts{
@@ -326,4 +350,22 @@ func RecordRequestCreated() {
 // RecordBidCreated records a bid creation
 func RecordBidCreated() {
 	bidsCreated.Inc()
+}
+
+// RecordKafkaUnmarshalError records a Kafka message that was skipped due to a
+// JSON unmarshal error. The offset is committed so the message is not retried.
+func RecordKafkaUnmarshalError(topic, consumerGroup string) {
+	kafkaUnmarshalErrors.WithLabelValues(topic, consumerGroup).Inc()
+}
+
+// RecordKafkaConsumerRetry records a single retry attempt for a transient
+// handler error on the given topic/consumer-group pair.
+func RecordKafkaConsumerRetry(topic, consumerGroup string) {
+	kafkaConsumerRetries.WithLabelValues(topic, consumerGroup).Inc()
+}
+
+// RecordKafkaDLQ records a message that has been routed to the dead-letter
+// queue (or discarded) after exhausting all retry attempts.
+func RecordKafkaDLQ(topic, consumerGroup string) {
+	kafkaDLQTotal.WithLabelValues(topic, consumerGroup).Inc()
 }
