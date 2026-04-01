@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.com/xakpro/cg-shared-libs/logger"
-	"gitlab.com/xakpro/cg-shared-libs/metrics"
+	"github.com/4ubak/cg-shared-libs/logger"
+	"github.com/4ubak/cg-shared-libs/metrics"
 	"go.uber.org/zap"
 )
 

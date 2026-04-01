@@ -1,7 +1,7 @@
 package grpc
 
 import (
-	"gitlab.com/xakpro/cg-shared-libs/jwt"
+	"github.com/4ubak/cg-shared-libs/jwt"
 )
 
 // JWTValidatorAdapter adapts jwt.Manager to the JWTValidator interface

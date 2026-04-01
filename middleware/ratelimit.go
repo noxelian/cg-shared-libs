@@ -6,8 +6,8 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"gitlab.com/xakpro/cg-shared-libs/logger"
-	"gitlab.com/xakpro/cg-shared-libs/ratelimit"
+	"github.com/4ubak/cg-shared-libs/logger"
+	"github.com/4ubak/cg-shared-libs/ratelimit"
 	"go.uber.org/zap"
 )
 

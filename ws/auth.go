@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"gitlab.com/xakpro/cg-shared-libs/jwt"
-	"gitlab.com/xakpro/cg-shared-libs/logger"
+	"github.com/4ubak/cg-shared-libs/jwt"
+	"github.com/4ubak/cg-shared-libs/logger"
 	"go.uber.org/zap"
 )
 

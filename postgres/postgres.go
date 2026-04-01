@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"gitlab.com/xakpro/cg-shared-libs/logger"
-	"gitlab.com/xakpro/cg-shared-libs/metrics"
+	"github.com/4ubak/cg-shared-libs/logger"
+	"github.com/4ubak/cg-shared-libs/metrics"
 	"go.uber.org/zap"
 )
 

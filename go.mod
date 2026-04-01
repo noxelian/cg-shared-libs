@@ -1,4 +1,4 @@
-module gitlab.com/xakpro/cg-shared-libs
+module github.com/4ubak/cg-shared-libs
 
 go 1.25.0
 
@@ -68,7 +68,6 @@ require (
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	golang.org/x/arch v0.25.0 // indirect
 	golang.org/x/crypto v0.49.0 // indirect
-	golang.org/x/tools v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260311181403-84a4fc48630c // indirect
 )
 

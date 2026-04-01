@@ -13,7 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/xakpro/cg-shared-libs/health"
+	"github.com/4ubak/cg-shared-libs/health"
 )
 
 // testChecker implements health.Checker for testing

@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"gitlab.com/xakpro/cg-shared-libs/logger"
+	"github.com/4ubak/cg-shared-libs/logger"
 	"go.uber.org/zap"
 )
 

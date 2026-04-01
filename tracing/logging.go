@@ -3,7 +3,7 @@ package tracing
 import (
 	"context"
 
-	"gitlab.com/xakpro/cg-shared-libs/logger"
+	"github.com/4ubak/cg-shared-libs/logger"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"

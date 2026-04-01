@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/xakpro/cg-shared-libs/circuitbreaker"
+	"github.com/4ubak/cg-shared-libs/circuitbreaker"
 )
 
 var errTest = errors.New("test error")

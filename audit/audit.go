@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"gitlab.com/xakpro/cg-shared-libs/logger"
+	"github.com/4ubak/cg-shared-libs/logger"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
