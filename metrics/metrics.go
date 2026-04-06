@@ -1,7 +1,10 @@
 package metrics
 
 import (
+	"bufio"
 	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -132,7 +135,9 @@ func (m *Metrics) HTTPMetricsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// responseWriter wraps http.ResponseWriter to capture status code
+// responseWriter wraps http.ResponseWriter to capture status code.
+// It also implements http.Hijacker so that WebSocket upgrades work
+// through the metrics middleware without panicking.
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
@@ -141,6 +146,14 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack implements http.Hijacker, required for WebSocket upgrades.
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, fmt.Errorf("underlying ResponseWriter does not implement http.Hijacker")
 }
 
 // GRPCMetricsInterceptor creates a gRPC interceptor for metrics
