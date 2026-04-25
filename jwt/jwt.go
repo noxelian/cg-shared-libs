@@ -24,12 +24,33 @@ const (
 	TokenTypeRefresh TokenType = "refresh"
 )
 
+// AppContext identifies which app the token was issued for and (optionally)
+// which organization the partner user has selected.
+// Backward compat: tokens without the App field are treated as app="client".
+type AppContext struct {
+	// App identifies the application: "client" or "partner".
+	// Empty string is treated as "client" for backward compatibility.
+	App     string `json:"app,omitempty"`
+	OrgID   string `json:"org_id,omitempty"`
+	OrgType string `json:"org_type,omitempty"`
+	CityID  int64  `json:"city_id,omitempty"`
+	OrgRole string `json:"org_role,omitempty"`
+}
+
 // Claims represents JWT claims
 type Claims struct {
 	UserID    int64     `json:"user_id"`
 	Phone     string    `json:"phone,omitempty"`
 	DeviceID  string    `json:"device_id,omitempty"`
 	TokenType TokenType `json:"token_type,omitempty"`
+
+	// App context claims (optional; backward-compat: absent = "client")
+	App     string `json:"app,omitempty"`
+	OrgID   string `json:"org_id,omitempty"`
+	OrgType string `json:"org_type,omitempty"`
+	CityID  int64  `json:"city_id,omitempty"`
+	OrgRole string `json:"org_role,omitempty"`
+
 	jwt.RegisteredClaims
 }
 
@@ -66,14 +87,21 @@ func NewManager(cfg Config) (*Manager, error) {
 	}, nil
 }
 
-// GenerateTokenPair generates access and refresh tokens
+// GenerateTokenPair generates access and refresh tokens without app context.
+// Backward-compatible: tokens produced here carry no app claim (treated as "client").
 func (m *Manager) GenerateTokenPair(userID int64, phone, deviceID string) (*TokenPair, error) {
-	accessToken, expiresAt, err := m.generateToken(userID, phone, deviceID, m.accessTokenTTL, TokenTypeAccess)
+	return m.GenerateTokenPairWithContext(userID, phone, deviceID, AppContext{})
+}
+
+// GenerateTokenPairWithContext generates access and refresh tokens with optional app context.
+// Use this when issuing tokens for the partner app or when an org has been selected.
+func (m *Manager) GenerateTokenPairWithContext(userID int64, phone, deviceID string, appCtx AppContext) (*TokenPair, error) {
+	accessToken, expiresAt, err := m.generateToken(userID, phone, deviceID, appCtx, m.accessTokenTTL, TokenTypeAccess)
 	if err != nil {
 		return nil, fmt.Errorf("generate access token: %w", err)
 	}
 
-	refreshToken, refreshExpiresAt, err := m.generateToken(userID, phone, deviceID, m.refreshTokenTTL, TokenTypeRefresh)
+	refreshToken, refreshExpiresAt, err := m.generateToken(userID, phone, deviceID, appCtx, m.refreshTokenTTL, TokenTypeRefresh)
 	if err != nil {
 		return nil, fmt.Errorf("generate refresh token: %w", err)
 	}
@@ -86,12 +114,12 @@ func (m *Manager) GenerateTokenPair(userID int64, phone, deviceID string) (*Toke
 	}, nil
 }
 
-// GenerateAccessToken generates only access token
+// GenerateAccessToken generates only access token without app context.
 func (m *Manager) GenerateAccessToken(userID int64, phone, deviceID string) (string, time.Time, error) {
-	return m.generateToken(userID, phone, deviceID, m.accessTokenTTL, TokenTypeAccess)
+	return m.generateToken(userID, phone, deviceID, AppContext{}, m.accessTokenTTL, TokenTypeAccess)
 }
 
-func (m *Manager) generateToken(userID int64, phone, deviceID string, ttl time.Duration, tokenType TokenType) (string, time.Time, error) {
+func (m *Manager) generateToken(userID int64, phone, deviceID string, appCtx AppContext, ttl time.Duration, tokenType TokenType) (string, time.Time, error) {
 	now := time.Now()
 	expiresAt := now.Add(ttl)
 
@@ -100,6 +128,11 @@ func (m *Manager) generateToken(userID int64, phone, deviceID string, ttl time.D
 		Phone:     phone,
 		DeviceID:  deviceID,
 		TokenType: tokenType,
+		App:       appCtx.App,
+		OrgID:     appCtx.OrgID,
+		OrgType:   appCtx.OrgType,
+		CityID:    appCtx.CityID,
+		OrgRole:   appCtx.OrgRole,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -164,14 +197,21 @@ func (m *Manager) ValidateRefreshToken(tokenString string) (*Claims, error) {
 	return claims, nil
 }
 
-// Refresh generates new token pair using refresh token
+// Refresh generates new token pair using refresh token, preserving app context claims.
 func (m *Manager) Refresh(refreshToken string) (*TokenPair, error) {
 	claims, err := m.ValidateRefreshToken(refreshToken)
 	if err != nil {
 		return nil, err
 	}
 
-	return m.GenerateTokenPair(claims.UserID, claims.Phone, claims.DeviceID)
+	appCtx := AppContext{
+		App:     claims.App,
+		OrgID:   claims.OrgID,
+		OrgType: claims.OrgType,
+		CityID:  claims.CityID,
+		OrgRole: claims.OrgRole,
+	}
+	return m.GenerateTokenPairWithContext(claims.UserID, claims.Phone, claims.DeviceID, appCtx)
 }
 
 // Errors

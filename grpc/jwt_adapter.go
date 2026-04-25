@@ -32,5 +32,10 @@ func (a *JWTValidatorAdapter) ValidateAccessToken(token string) (*JWTClaims, err
 		UserID:   claims.UserID,
 		Phone:    claims.Phone,
 		DeviceID: claims.DeviceID,
+		App:      claims.App,
+		OrgID:    claims.OrgID,
+		OrgType:  claims.OrgType,
+		CityID:   claims.CityID,
+		OrgRole:  claims.OrgRole,
 	}, nil
 }

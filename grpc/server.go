@@ -396,21 +396,37 @@ type JWTValidator interface {
 	ValidateAccessToken(token string) (*JWTClaims, error)
 }
 
-// JWTClaims represents JWT claims
+// JWTClaims represents JWT claims extracted from an access token.
+// App context fields are optional; absent App is treated as "client".
 type JWTClaims struct {
 	UserID   int64
 	Phone    string
 	DeviceID string
+
+	// App context claims (optional; backward-compat: absent = "client")
+	App     string
+	OrgID   string
+	OrgType string
+	CityID  int64
+	OrgRole string
 }
 
 // AuthContextKey is the key for auth info in context
 type authContextKey struct{}
 
-// AuthInfo holds authenticated user info
+// AuthInfo holds authenticated user info extracted from the JWT.
+// App context fields mirror JWTClaims; App defaults to "client" when empty.
 type AuthInfo struct {
 	UserID   int64
 	Phone    string
 	DeviceID string
+
+	// App context claims (optional; backward-compat: absent = "client")
+	App     string
+	OrgID   string
+	OrgType string
+	CityID  int64
+	OrgRole string
 }
 
 // GetAuthInfo extracts auth info from context
@@ -487,6 +503,11 @@ func AuthInterceptor(validator JWTValidator, cfg AuthInterceptorConfig) grpc.Una
 			UserID:   claims.UserID,
 			Phone:    claims.Phone,
 			DeviceID: claims.DeviceID,
+			App:      claims.App,
+			OrgID:    claims.OrgID,
+			OrgType:  claims.OrgType,
+			CityID:   claims.CityID,
+			OrgRole:  claims.OrgRole,
 		}
 		ctx = context.WithValue(ctx, authContextKey{}, authInfo)
 
