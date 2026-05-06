@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/segmentio/kafka-go"
@@ -151,6 +152,12 @@ type Metadata struct {
 type Producer struct {
 	writer *kafka.Writer
 	topic  string
+
+	// extraWriters holds per-topic writers spawned lazily by PublishJSONTo.
+	// Guarded by extraMu — both fields stay nil for callers that only ever
+	// write to the bound topic, so the common path keeps zero overhead.
+	extraMu      sync.Mutex
+	extraWriters map[string]*kafka.Writer
 }
 
 // NewProducer creates a new Kafka producer
@@ -224,13 +231,84 @@ func (p *Producer) PublishJSON(ctx context.Context, key string, data any) error 
 	return nil
 }
 
-// Close closes the producer
+// PublishJSONTo publishes a JSON message to an arbitrary topic, overriding
+// the Producer's bound topic. Useful for buffered publishers that fan
+// events from multiple domains through a single Producer instance — the
+// previous design quietly dropped all routing because PublishJSON only
+// ever wrote to the bound topic.
+//
+// Internally creates a kafka-go Writer per target topic on first use and
+// caches it. Cleared on Close().
+func (p *Producer) PublishJSONTo(ctx context.Context, topic, key string, data any) error {
+	if topic == "" || topic == p.topic {
+		return p.PublishJSON(ctx, key, data)
+	}
+
+	value, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal data: %w", err)
+	}
+
+	w := p.writerFor(topic)
+	msg := kafka.Message{
+		Key:   []byte(key),
+		Value: value,
+		Time:  time.Now(),
+	}
+	if err := w.WriteMessages(ctx, msg); err != nil {
+		return err
+	}
+
+	metrics.RecordKafkaMessageProduced(topic)
+	return nil
+}
+
+func (p *Producer) writerFor(topic string) *kafka.Writer {
+	p.extraMu.Lock()
+	defer p.extraMu.Unlock()
+
+	if p.extraWriters == nil {
+		p.extraWriters = make(map[string]*kafka.Writer)
+	}
+	if w, ok := p.extraWriters[topic]; ok {
+		return w
+	}
+
+	src := p.writer
+	w := &kafka.Writer{
+		Addr:         src.Addr,
+		Topic:        topic,
+		Balancer:     src.Balancer,
+		BatchSize:    src.BatchSize,
+		BatchTimeout: src.BatchTimeout,
+		Async:        src.Async,
+	}
+	p.extraWriters[topic] = w
+	logger.Info("Kafka producer extra writer created", zap.String("topic", topic))
+	return w
+}
+
+// Close closes the producer and any topic-specific writers spawned by
+// PublishJSONTo. Returns the first error encountered, but always attempts
+// to close all writers so we don't leak connections on shutdown.
 func (p *Producer) Close() error {
+	var firstErr error
 	if p.writer != nil {
 		logger.Info("Kafka producer closed", zap.String("topic", p.topic))
-		return p.writer.Close()
+		if err := p.writer.Close(); err != nil {
+			firstErr = err
+		}
 	}
-	return nil
+	p.extraMu.Lock()
+	for topic, w := range p.extraWriters {
+		if err := w.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		logger.Info("Kafka extra writer closed", zap.String("topic", topic))
+	}
+	p.extraWriters = nil
+	p.extraMu.Unlock()
+	return firstErr
 }
 
 // Consumer wraps kafka.Reader
