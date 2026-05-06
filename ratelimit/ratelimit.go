@@ -234,7 +234,11 @@ func DefaultTiers() map[string]Config {
 			Window: time.Minute,
 		},
 		"websocket": {
-			Limit:  5,
+			// 60/min covers staff browsers reconnecting on transient drops
+			// (3s reconnect delay × pod rollout / wifi blip). The previous
+			// 5/min was abuse-tuned for mobile but locked out legitimate
+			// users after the 5th attempt within a minute.
+			Limit:  60,
 			Window: time.Minute,
 		},
 	}
