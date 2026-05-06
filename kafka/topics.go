@@ -22,9 +22,10 @@ const (
 	// pipeline_type flow — see cg-crm DealPublisher.PublishDealToWorkshop.
 	TopicCRMDealToWorkshop = "crm.deal.to_workshop"
 
-	// CRM telephony recording lifecycle. Outbox-backed (migration 000063)
-	// because transcript pipeline must not lose events on Kafka blips.
-	TopicCRMTelephonyRecordingReady = "crm.telephony.recording_ready"
+	// CRM telephony events (recording_ready, etc). Outbox-backed
+	// (migration 000063) because transcript pipeline must not lose
+	// events on Kafka blips.
+	TopicCRMTelephonyEvents = "crm.telephony.events"
 
 	// Marketplace / autobody (cg-orders + cg-services + workshop).
 	TopicOrderEvents    = "order.events"
