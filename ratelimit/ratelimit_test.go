@@ -290,8 +290,8 @@ func TestDefaultTiers(t *testing.T) {
 		t.Errorf("api limit should be 100, got %d", tiers["api"].Limit)
 	}
 
-	// Check websocket tier limits (60 connections/minute per user)
-	if tiers["websocket"].Limit != 60 {
-		t.Errorf("websocket limit should be 60, got %d", tiers["websocket"].Limit)
+	// Check websocket tier limits (200 connections/minute per user)
+	if tiers["websocket"].Limit != 200 {
+		t.Errorf("websocket limit should be 200, got %d", tiers["websocket"].Limit)
 	}
 }

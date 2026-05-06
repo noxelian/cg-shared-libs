@@ -234,11 +234,12 @@ func DefaultTiers() map[string]Config {
 			Window: time.Minute,
 		},
 		"websocket": {
-			// 60/min covers staff browsers reconnecting on transient drops
-			// (3s reconnect delay × pod rollout / wifi blip). The previous
-			// 5/min was abuse-tuned for mobile but locked out legitimate
-			// users after the 5th attempt within a minute.
-			Limit:  60,
+			// Generous budget so a reconnect storm during initial auth
+			// bootstrap (singleton + StrictMode + 3s onclose retry) never
+			// locks a real user out for minutes. 200/min ≈ one connect
+			// per 300ms over a window — well above any sane client
+			// reconnect cadence and still protective vs. abuse.
+			Limit:  200,
 			Window: time.Minute,
 		},
 	}
