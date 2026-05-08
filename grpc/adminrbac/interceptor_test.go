@@ -172,6 +172,34 @@ func TestAdminRBAC_TableDriven(t *testing.T) {
 	}
 }
 
+func TestIsPlatformAdmin(t *testing.T) {
+	tests := []struct {
+		name  string
+		roles []string
+		want  bool
+	}{
+		{"admin role", []string{"admin"}, true},
+		{"support role", []string{"support"}, true},
+		{"admin among many", []string{"mechanic", "admin"}, true},
+		{"support among many", []string{"receptionist", "support"}, true},
+		{"unrelated role", []string{"mechanic"}, false},
+		{"no roles", []string{}, false},
+		{"empty context", nil, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var ctx context.Context
+			if tc.roles == nil {
+				ctx = context.Background()
+			} else {
+				ctx = ctxWithRole(tc.roles...)
+			}
+			assert.Equal(t, tc.want, adminrbac.IsPlatformAdmin(ctx))
+		})
+	}
+}
+
 func TestAdminRBAC_CustomAllowedRoles(t *testing.T) {
 	// Custom config: only "platform_admin" is allowed.
 	cfg := adminrbac.Config{

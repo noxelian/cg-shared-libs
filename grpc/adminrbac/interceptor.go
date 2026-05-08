@@ -110,6 +110,25 @@ func (i *Interceptor) isAdminMethod(fullMethod string) bool {
 	return false
 }
 
+// IsPlatformAdmin returns true when the incoming gRPC context carries an
+// x-platform-role metadata value of "admin" or "support". Use this helper
+// inside gRPC handlers to allow platform admins to impersonate any user
+// without being bound by per-user ownership checks.
+//
+// Example usage in a handler:
+//
+//	if authInfo.UserID != 0 && authInfo.UserID != buyerUserID && !adminrbac.IsPlatformAdmin(ctx) {
+//	    return nil, status.Error(codes.PermissionDenied, "cannot access another user's cart")
+//	}
+func IsPlatformAdmin(ctx context.Context) bool {
+	for _, r := range extractPlatformRoles(ctx) {
+		if r == "admin" || r == "support" {
+			return true
+		}
+	}
+	return false
+}
+
 // extractPlatformRoles reads all values of the x-platform-role metadata key
 // from the incoming gRPC context.
 func extractPlatformRoles(ctx context.Context) []string {
