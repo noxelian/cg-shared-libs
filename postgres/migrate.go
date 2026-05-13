@@ -79,14 +79,15 @@ func RunMigrations(ctx context.Context, cfg Config, migrationsPath string) error
 		if err := m.Force(int(version)); err != nil {
 			return fmt.Errorf("force migration version: %w", err)
 		}
-		// Rollback to previous version to reapply migration (safer approach)
+		// Rollback the failed migration one step so Up() can reapply it cleanly.
+		// Using Steps(-1) (not Migrate(version-1)) — golang-migrate v4's Migrate(0)
+		// always errors with "no migration found for version 0".
 		if version > 0 {
-			logger.Info("rolling back to previous version to reapply migration",
+			logger.Info("rolling back one step to reapply dirty migration",
 				zap.Uint("from_version", version),
-				zap.Uint("to_version", version-1),
 			)
-			if err := m.Migrate(uint(version - 1)); err != nil {
-				logger.Warn("failed to rollback, will try to apply anyway", zap.Error(err))
+			if err := m.Steps(-1); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+				return fmt.Errorf("rollback dirty migration v%d: %w", version, err)
 			}
 		}
 	} else if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
