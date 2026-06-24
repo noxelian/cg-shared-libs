@@ -4,7 +4,15 @@ import (
 	"github.com/4ubak/cg-shared-libs/jwt"
 )
 
-// JWTValidatorAdapter adapts jwt.Manager to the JWTValidator interface
+// accessTokenValidator is the verify surface the adapter needs. Both
+// *jwt.Manager (legacy HS256) and *jwt.Validator (RS256 via JWKS, with optional
+// HS256 dual-accept) satisfy it, so services migrate to RS256 by swapping which
+// one they pass in — no call-site change.
+type accessTokenValidator interface {
+	ValidateAccessToken(token string) (*jwt.Claims, error)
+}
+
+// JWTValidatorAdapter adapts a jwt validator to the JWTValidator interface
 // required by AuthInterceptor. Use NewJWTValidatorAdapter to construct.
 //
 // This eliminates the boilerplate that every service was duplicating locally:
@@ -14,17 +22,18 @@ import (
 //	    sharedGRPC.AuthInterceptorConfig{...},
 //	)
 type JWTValidatorAdapter struct {
-	manager *jwt.Manager
+	validator accessTokenValidator
 }
 
-// NewJWTValidatorAdapter wraps a jwt.Manager so it satisfies JWTValidator.
-func NewJWTValidatorAdapter(manager *jwt.Manager) *JWTValidatorAdapter {
-	return &JWTValidatorAdapter{manager: manager}
+// NewJWTValidatorAdapter wraps a jwt validator (*jwt.Manager or *jwt.Validator)
+// so it satisfies JWTValidator.
+func NewJWTValidatorAdapter(validator accessTokenValidator) *JWTValidatorAdapter {
+	return &JWTValidatorAdapter{validator: validator}
 }
 
 // ValidateAccessToken implements JWTValidator.
 func (a *JWTValidatorAdapter) ValidateAccessToken(token string) (*JWTClaims, error) {
-	claims, err := a.manager.ValidateAccessToken(token)
+	claims, err := a.validator.ValidateAccessToken(token)
 	if err != nil {
 		return nil, err
 	}

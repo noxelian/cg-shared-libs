@@ -8,12 +8,35 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// Config holds JWT configuration
+// Config holds JWT configuration.
+//
+// Three concerns are layered here so a single struct can drive the whole
+// HS256 -> RS256 migration without forcing a lockstep deploy:
+//   - HS256 (legacy): SecretKey. Used by Manager (sign+verify) and, while
+//     AcceptHS256 is true, by Validator for backward-compatible verification.
+//   - RS256 signing (issuer only): PrivateKeyPEM + SigningKeyID. Used by Signer.
+//   - RS256 verification (everyone): JWKSURL. Used by Validator.
+//
+// Cutover gates (AcceptHS256/SignWithRS256) let each service flip behavior
+// independently via env without a code change.
 type Config struct {
 	SecretKey       string        `yaml:"secret_key" env:"JWT_SECRET_KEY"`
 	AccessTokenTTL  time.Duration `yaml:"access_token_ttl" env:"JWT_ACCESS_TOKEN_TTL" env-default:"15m"`
 	RefreshTokenTTL time.Duration `yaml:"refresh_token_ttl" env:"JWT_REFRESH_TOKEN_TTL" env-default:"720h"` // 30 days
 	Issuer          string        `yaml:"issuer" env:"JWT_ISSUER" env-default:"cg-platform"`
+
+	// RS256 signing material — set ONLY on the issuer (cg-users auth).
+	PrivateKeyPEM string `yaml:"private_key_pem" env:"JWT_PRIVATE_KEY_PEM"` // PKCS#8 or PKCS#1 RSA private key, PEM-encoded
+	SigningKeyID  string `yaml:"signing_kid" env:"JWT_SIGNING_KID"`         // kid stamped into the token header, e.g. "cg-users-2026-06"
+
+	// RS256 verification — set on every verifying service.
+	JWKSURL     string        `yaml:"jwks_url" env:"JWT_JWKS_URL"`
+	JWKSRefresh time.Duration `yaml:"jwks_refresh" env:"JWT_JWKS_REFRESH" env-default:"15m"`
+	JWKSTimeout time.Duration `yaml:"jwks_timeout" env:"JWT_JWKS_TIMEOUT" env-default:"5s"`
+
+	// Cutover gates.
+	AcceptHS256   bool `yaml:"accept_hs256" env:"JWT_ACCEPT_HS256" env-default:"true"` // Validator also accepts legacy HS256; flip false at end of migration
+	SignWithRS256 bool `yaml:"sign_rs256" env:"JWT_SIGN_RS256" env-default:"false"`    // issuer mints RS256 instead of HS256 (consumed by cg-users wiring)
 }
 
 // TokenType represents the type of JWT token
@@ -120,6 +143,22 @@ func (m *Manager) GenerateAccessToken(userID int64, phone, deviceID string) (str
 }
 
 func (m *Manager) generateToken(userID int64, phone, deviceID string, appCtx AppContext, ttl time.Duration, tokenType TokenType) (string, time.Time, error) {
+	claims, expiresAt := buildClaims(userID, phone, deviceID, appCtx, ttl, tokenType, m.issuer)
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(m.secretKey)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("sign token: %w", err)
+	}
+
+	return tokenString, expiresAt, nil
+}
+
+// buildClaims assembles the canonical Claims for a token. Shared by the HS256
+// Manager and the RS256 Signer so both produce byte-identical claim sets —
+// only the signing method/key differs. Keeping this in one place guarantees
+// service-to-service tokens look the same before and after the migration.
+func buildClaims(userID int64, phone, deviceID string, appCtx AppContext, ttl time.Duration, tokenType TokenType, issuer string) (Claims, time.Time) {
 	now := time.Now()
 	expiresAt := now.Add(ttl)
 
@@ -136,17 +175,11 @@ func (m *Manager) generateToken(userID int64, phone, deviceID string, appCtx App
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(now),
-			Issuer:    m.issuer,
+			Issuer:    issuer,
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString(m.secretKey)
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("sign token: %w", err)
-	}
-
-	return tokenString, expiresAt, nil
+	return claims, expiresAt
 }
 
 // Parse parses and validates a token
@@ -216,8 +249,7 @@ func (m *Manager) Refresh(refreshToken string) (*TokenPair, error) {
 
 // Errors
 var (
-	ErrTokenExpired  = errors.New("token expired")
-	ErrInvalidToken  = errors.New("invalid token")
+	ErrTokenExpired   = errors.New("token expired")
+	ErrInvalidToken   = errors.New("invalid token")
 	ErrWrongTokenType = errors.New("wrong token type")
 )
-
