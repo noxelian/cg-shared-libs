@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -123,12 +124,16 @@ func (s *Signer) Refresh(refreshToken string) (*TokenPair, error) {
 }
 
 func (s *Signer) parseSelf(tokenString string) (*Claims, error) {
+	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256"})}
+	if s.issuer != "" {
+		opts = append(opts, jwt.WithIssuer(s.issuer))
+	}
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("%w: unexpected signing method", ErrInvalidToken)
 		}
 		return &s.priv.PublicKey, nil
-	}, jwt.WithValidMethods([]string{"RS256"}))
+	}, opts...)
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
 			return nil, ErrTokenExpired
@@ -145,8 +150,13 @@ func (s *Signer) parseSelf(tokenString string) (*Claims, error) {
 // KeyID returns the signing key id (kid) stamped into minted tokens.
 func (s *Signer) KeyID() string { return s.kid }
 
-// PublicKey returns the issuer's RSA public key.
-func (s *Signer) PublicKey() *rsa.PublicKey { return &s.priv.PublicKey }
+// PublicKey returns a defensive copy of the issuer's RSA public key, so callers
+// cannot mutate the Signer's internal key material through the returned pointer.
+func (s *Signer) PublicKey() *rsa.PublicKey {
+	pub := s.priv.PublicKey
+	pub.N = new(big.Int).Set(s.priv.PublicKey.N)
+	return &pub
+}
 
 // JWKSJSON returns the issuer's public key as a JWKS document, ready to serve
 // from cg-users' /.well-known/jwks.json endpoint.

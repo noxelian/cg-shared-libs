@@ -34,6 +34,13 @@ type Config struct {
 	JWKSRefresh time.Duration `yaml:"jwks_refresh" env:"JWT_JWKS_REFRESH" env-default:"15m"`
 	JWKSTimeout time.Duration `yaml:"jwks_timeout" env:"JWT_JWKS_TIMEOUT" env-default:"5s"`
 
+	// ExpectedIssuer, when non-empty, makes Validator reject tokens whose `iss`
+	// claim differs. Leave EMPTY during the dual-accept window — services
+	// currently mint with inconsistent issuers (cg-platform / amocrm-sync /
+	// organization-service); enable only after the central issuer (cg-users)
+	// makes `iss` uniform across all minted tokens.
+	ExpectedIssuer string `yaml:"expected_issuer" env:"JWT_EXPECTED_ISSUER"`
+
 	// Cutover gates.
 	AcceptHS256   bool `yaml:"accept_hs256" env:"JWT_ACCEPT_HS256" env-default:"true"` // Validator also accepts legacy HS256; flip false at end of migration
 	SignWithRS256 bool `yaml:"sign_rs256" env:"JWT_SIGN_RS256" env-default:"false"`    // issuer mints RS256 instead of HS256 (consumed by cg-users wiring)
@@ -247,9 +254,7 @@ func (m *Manager) Refresh(refreshToken string) (*TokenPair, error) {
 	return m.GenerateTokenPairWithContext(claims.UserID, claims.Phone, claims.DeviceID, appCtx)
 }
 
-// Errors
-var (
-	ErrTokenExpired   = errors.New("token expired")
-	ErrInvalidToken   = errors.New("invalid token")
-	ErrWrongTokenType = errors.New("wrong token type")
-)
+// Close releases resources. It is a no-op for Manager (HS256 holds none); it
+// exists so Manager satisfies the same Verifier interface as Validator, letting
+// services swap one for the other without touching shutdown wiring.
+func (m *Manager) Close() error { return nil }

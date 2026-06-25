@@ -2,6 +2,7 @@ package jwt
 
 import (
 	"context"
+	"crypto"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
@@ -10,12 +11,27 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 )
 
-// ErrUnknownKID is returned when a token references a key id absent from the JWKS.
-var ErrUnknownKID = errors.New("jwt: unknown key id")
+// validateJWKSURL rejects a JWKS URL that is unparseable or not http(s). The
+// URL should come from trusted config (Helm/k8s), never user input; this is a
+// guard against gross misconfiguration, not a substitute for that trust.
+func validateJWKSURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("jwt: invalid JWKS URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("jwt: JWKS URL must be http(s), got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return errors.New("jwt: JWKS URL has no host")
+	}
+	return nil
+}
 
 const (
 	// minRefetchInterval rate-limits refresh-on-unknown-kid so a flood of
@@ -157,7 +173,7 @@ func (c *jwksCache) refreshNow(ctx context.Context) error {
 
 // publicKey resolves a kid to an RSA public key, refreshing once (rate-limited)
 // if the kid is unknown, then falling back to whatever is cached.
-func (c *jwksCache) publicKey(kid string) (*rsa.PublicKey, error) {
+func (c *jwksCache) publicKey(kid string) (crypto.PublicKey, error) {
 	c.mu.RLock()
 	key := c.keys[kid]
 	last := c.lastAttempt
@@ -196,9 +212,11 @@ func parseJWKS(raw []byte) (map[string]*rsa.PublicKey, error) {
 		return nil, err
 	}
 	out := make(map[string]*rsa.PublicKey, len(set.Keys))
+	var skipped []string
 	for _, k := range set.Keys {
 		if k.Kty != "RSA" {
-			continue // we only sign with RSA; ignore unrelated keys
+			skipped = append(skipped, k.Kty) // we only sign with RSA today; ignore others
+			continue
 		}
 		pub, err := parseRSAJWK(k)
 		if err != nil {
@@ -207,7 +225,10 @@ func parseJWKS(raw []byte) (map[string]*rsa.PublicKey, error) {
 		out[k.Kid] = pub
 	}
 	if len(out) == 0 {
-		return nil, errors.New("no RSA keys present")
+		if len(skipped) > 0 {
+			return nil, fmt.Errorf("no RSA keys present; found non-RSA kty %v", skipped)
+		}
+		return nil, errors.New("no keys present")
 	}
 	return out, nil
 }

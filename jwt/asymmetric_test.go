@@ -250,7 +250,9 @@ func TestJWKSCache_RefreshOnUnknownKid(t *testing.T) {
 	pk, err := c.publicKey("kid-2")
 	require.NoError(t, err)
 	require.NotNil(t, pk)
-	assert.Equal(t, 0, pk.N.Cmp(s2.PublicKey().N))
+	rsaPub, ok := pk.(*rsa.PublicKey)
+	require.True(t, ok)
+	assert.Equal(t, 0, rsaPub.N.Cmp(s2.PublicKey().N))
 }
 
 func TestJWKSCache_LastKnownGoodOnRefreshFailure(t *testing.T) {

@@ -1,16 +1,18 @@
 package jwt
 
 import (
-	"crypto/rsa"
+	"crypto"
 	"fmt"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// publicKeyResolver resolves an RSA public key by its key id (kid).
-// Implemented by jwksCache; abstracted so the keyfunc is unit-testable.
+// publicKeyResolver resolves a public key by its key id (kid). It returns
+// crypto.PublicKey (not *rsa.PublicKey) so the verify path is algorithm-neutral:
+// adding ES256 later means teaching the JWKS cache to parse EC keys, with no
+// change here or in the Validator.
 type publicKeyResolver interface {
-	publicKey(kid string) (*rsa.PublicKey, error)
+	publicKey(kid string) (crypto.PublicKey, error)
 }
 
 // buildKeyFunc returns a jwt.Keyfunc that is algorithm- and kid-aware.

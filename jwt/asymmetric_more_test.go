@@ -111,25 +111,31 @@ func TestValidator_KeyfuncBranches(t *testing.T) {
 }
 
 func TestValidator_ExpiredRS256(t *testing.T) {
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	der, err := x509.MarshalPKCS8PrivateKey(priv)
-	require.NoError(t, err)
-	pemb := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-	s, err := NewSigner(Config{PrivateKeyPEM: string(pemb), SigningKeyID: "kid-1", Issuer: "test-issuer", AccessTokenTTL: time.Millisecond, RefreshTokenTTL: time.Millisecond})
-	require.NoError(t, err)
-
+	s := newTestSigner(t, "kid-1")
 	srv := jwksServer(t, s)
 	defer srv.Close()
 	v, err := NewValidator(Config{JWKSURL: srv.URL, AcceptHS256: false, JWKSRefresh: time.Hour, JWKSTimeout: 2 * time.Second})
 	require.NoError(t, err)
 	defer v.Close()
 
-	at, _, err := s.GenerateAccessToken(1, "+7", "d")
+	// Craft an already-expired RS256 token deterministically (no sleep) by
+	// signing past timestamps with the signer's own key.
+	now := time.Now()
+	claims := Claims{
+		UserID:    1,
+		TokenType: TokenTypeAccess,
+		RegisteredClaims: gojwt.RegisteredClaims{
+			ExpiresAt: gojwt.NewNumericDate(now.Add(-time.Hour)),
+			IssuedAt:  gojwt.NewNumericDate(now.Add(-2 * time.Hour)),
+			Issuer:    "test-issuer",
+		},
+	}
+	tok := gojwt.NewWithClaims(gojwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = "kid-1"
+	str, err := tok.SignedString(s.priv)
 	require.NoError(t, err)
-	time.Sleep(10 * time.Millisecond)
 
-	_, err = v.ValidateAccessToken(at)
+	_, err = v.ValidateAccessToken(str)
 	assert.ErrorIs(t, err, ErrTokenExpired)
 }
 

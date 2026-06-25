@@ -20,10 +20,11 @@ import (
 // (ValidateAccessToken/ValidateRefreshToken/Parse), so the grpc adapter and the
 // ws authenticator accept it unchanged.
 type Validator struct {
-	jwks         *jwksCache
-	hmacKey      []byte
-	acceptHS256  bool
-	validMethods []string
+	jwks           *jwksCache
+	hmacKey        []byte
+	acceptHS256    bool
+	validMethods   []string
+	expectedIssuer string
 }
 
 // NewValidator builds a Validator from config.
@@ -37,7 +38,7 @@ type Validator struct {
 //
 // At least one verification path (JWKS or HS256) must be configured.
 func NewValidator(cfg Config) (*Validator, error) {
-	v := &Validator{}
+	v := &Validator{expectedIssuer: cfg.ExpectedIssuer}
 	if cfg.AcceptHS256 && cfg.SecretKey != "" {
 		v.hmacKey = []byte(cfg.SecretKey)
 	}
@@ -48,6 +49,9 @@ func NewValidator(cfg Config) (*Validator, error) {
 	v.validMethods = validMethods(v.acceptHS256)
 
 	if cfg.JWKSURL != "" {
+		if err := validateJWKSURL(cfg.JWKSURL); err != nil {
+			return nil, err
+		}
 		refresh := cfg.JWKSRefresh
 		if refresh == 0 {
 			refresh = 15 * time.Minute
@@ -83,8 +87,11 @@ func (v *Validator) keyFunc() gojwt.Keyfunc {
 
 // Parse validates the token signature + standard claims and returns the claims.
 func (v *Validator) Parse(tokenString string) (*Claims, error) {
-	token, err := gojwt.ParseWithClaims(tokenString, &Claims{}, v.keyFunc(),
-		gojwt.WithValidMethods(v.validMethods))
+	opts := []gojwt.ParserOption{gojwt.WithValidMethods(v.validMethods)}
+	if v.expectedIssuer != "" {
+		opts = append(opts, gojwt.WithIssuer(v.expectedIssuer))
+	}
+	token, err := gojwt.ParseWithClaims(tokenString, &Claims{}, v.keyFunc(), opts...)
 	if err != nil {
 		if errors.Is(err, gojwt.ErrTokenExpired) {
 			return nil, ErrTokenExpired
@@ -124,8 +131,11 @@ func (v *Validator) ValidateRefreshToken(tokenString string) (*Claims, error) {
 }
 
 // Close stops the background JWKS refresher. Safe to call multiple times.
-func (v *Validator) Close() {
+// Returns nil; the error return exists to satisfy io.Closer / the Verifier
+// interface so Manager and Validator are interchangeable.
+func (v *Validator) Close() error {
 	if v.jwks != nil {
 		v.jwks.Close()
 	}
+	return nil
 }
