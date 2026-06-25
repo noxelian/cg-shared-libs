@@ -37,13 +37,15 @@ type Validator struct {
 //
 // At least one verification path (JWKS or HS256) must be configured.
 func NewValidator(cfg Config) (*Validator, error) {
-	v := &Validator{
-		acceptHS256:  cfg.AcceptHS256,
-		validMethods: validMethods(cfg.AcceptHS256),
-	}
+	v := &Validator{}
 	if cfg.AcceptHS256 && cfg.SecretKey != "" {
 		v.hmacKey = []byte(cfg.SecretKey)
 	}
+	// Effective dual-accept requires an ACTUAL HMAC key, not just the flag.
+	// Otherwise validMethods would advertise HS256 that can never verify and
+	// the service would appear to be in dual-accept mode when it is not.
+	v.acceptHS256 = v.hmacKey != nil
+	v.validMethods = validMethods(v.acceptHS256)
 
 	if cfg.JWKSURL != "" {
 		refresh := cfg.JWKSRefresh
@@ -57,15 +59,15 @@ func NewValidator(cfg Config) (*Validator, error) {
 		v.jwks = newJWKSCache(cfg.JWKSURL, refresh, timeout, &http.Client{Timeout: timeout})
 
 		if err := v.jwks.start(context.Background()); err != nil {
-			if !cfg.AcceptHS256 {
+			if !v.acceptHS256 {
 				v.jwks.Close()
 				return nil, fmt.Errorf("jwt: JWKS preload failed: %w", err)
 			}
 			// Degraded start: HS256 still verifies; background refresh will
 			// pick up the keys once cg-users is reachable.
 		}
-	} else if !cfg.AcceptHS256 {
-		return nil, errors.New("jwt: validator needs JWKSURL or AcceptHS256")
+	} else if !v.acceptHS256 {
+		return nil, errors.New("jwt: validator needs JWKSURL or AcceptHS256 with a secret")
 	}
 
 	return v, nil

@@ -189,7 +189,7 @@ func (m *Manager) Parse(tokenString string) (*Claims, error) {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return m.secretKey, nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"})) // defense-in-depth: pin alg before the keyfunc runs
 
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {

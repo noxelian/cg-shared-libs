@@ -242,8 +242,9 @@ func TestJWKSCache_RefreshOnUnknownKid(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnknownKID)
 
 	// Age the cache past the rate limit -> refresh-on-unknown-kid resolves it.
+	// (lastAttempt drives the limiter, not lastFetch.)
 	c.mu.Lock()
-	c.lastFetch = time.Now().Add(-2 * minRefetchInterval)
+	c.lastAttempt = time.Now().Add(-2 * minRefetchInterval)
 	c.mu.Unlock()
 
 	pk, err := c.publicKey("kid-2")

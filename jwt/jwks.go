@@ -23,6 +23,9 @@ const (
 	minRefetchInterval = 30 * time.Second
 	// maxJWKSBytes caps the JWKS response we will read.
 	maxJWKSBytes = 1 << 20
+	// maxRSAModulusBits caps a published key's modulus (RSA-8192) to bound
+	// verify cost against a pathologically large key.
+	maxRSAModulusBits = 8192
 )
 
 // jwkKey / jwkSet model the subset of RFC 7517 we need (RSA signing keys).
@@ -53,10 +56,12 @@ type jwksCache struct {
 	refreshEvery time.Duration
 	timeout      time.Duration
 
-	mu        sync.RWMutex
-	keys      map[string]*rsa.PublicKey
-	lastFetch time.Time
+	mu          sync.RWMutex
+	keys        map[string]*rsa.PublicKey
+	lastFetch   time.Time // last SUCCESSFUL refresh
+	lastAttempt time.Time // last refresh ATTEMPT (success or failure) — drives the rate limiter
 
+	refreshMu sync.Mutex // serializes on-demand (unknown-kid) refreshes
 	stop      chan struct{}
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -122,6 +127,15 @@ func (c *jwksCache) Close() {
 }
 
 func (c *jwksCache) refreshNow(ctx context.Context) error {
+	// Record the attempt time BEFORE fetching, regardless of outcome. The
+	// rate limiter keys off lastAttempt (not lastFetch) so it keeps throttling
+	// during a JWKS outage — otherwise lastFetch never advances and every
+	// unknown-kid token would trigger a fresh blocking fetch against the dead
+	// endpoint (DoS amplification exactly when the issuer is already unhealthy).
+	c.mu.Lock()
+	c.lastAttempt = time.Now()
+	c.mu.Unlock()
+
 	cctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -146,20 +160,30 @@ func (c *jwksCache) refreshNow(ctx context.Context) error {
 func (c *jwksCache) publicKey(kid string) (*rsa.PublicKey, error) {
 	c.mu.RLock()
 	key := c.keys[kid]
-	last := c.lastFetch
+	last := c.lastAttempt
 	c.mu.RUnlock()
 	if key != nil {
 		return key, nil
 	}
 
 	if time.Since(last) > minRefetchInterval {
-		if err := c.refreshNow(context.Background()); err == nil {
+		// Serialize on-demand refreshes so a burst of unknown-kid tokens
+		// collapses into a single fetch (no thundering herd at key rotation),
+		// and double-check under the lock in case a peer just refreshed.
+		c.refreshMu.Lock()
+		c.mu.RLock()
+		key = c.keys[kid]
+		throttled := time.Since(c.lastAttempt) <= minRefetchInterval
+		c.mu.RUnlock()
+		if key == nil && !throttled {
+			_ = c.refreshNow(context.Background())
 			c.mu.RLock()
 			key = c.keys[kid]
 			c.mu.RUnlock()
-			if key != nil {
-				return key, nil
-			}
+		}
+		c.refreshMu.Unlock()
+		if key != nil {
+			return key, nil
 		}
 	}
 
@@ -201,10 +225,17 @@ func parseRSAJWK(k jwkKey) (*rsa.PublicKey, error) {
 	for _, b := range eBytes {
 		e = e<<8 | int(b)
 	}
-	if e == 0 {
-		return nil, errors.New("zero RSA exponent")
+	if e < 2 {
+		return nil, errors.New("invalid RSA exponent")
 	}
-	return &rsa.PublicKey{N: new(big.Int).SetBytes(nBytes), E: e}, nil
+	n := new(big.Int).SetBytes(nBytes)
+	// Bound the modulus size: a pathologically large modulus would make every
+	// RS256 verify expensive. The issuer is trusted and uses RSA-2048, so a
+	// generous ceiling (RSA-8192) is plenty.
+	if bits := n.BitLen(); bits > maxRSAModulusBits {
+		return nil, fmt.Errorf("RSA modulus too large: %d bits", bits)
+	}
+	return &rsa.PublicKey{N: n, E: e}, nil
 }
 
 // rsaPublicToJWK encodes an RSA public key as a JWK with the given kid.
