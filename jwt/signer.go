@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -29,15 +30,24 @@ type Signer struct {
 	refreshTTL time.Duration
 }
 
-// NewSigner parses the PEM private key and returns a Signer.
+// NewSigner parses the RSA private key (inline PEM or a mounted file) and
+// returns a Signer.
 func NewSigner(cfg Config) (*Signer, error) {
-	if cfg.PrivateKeyPEM == "" {
-		return nil, errors.New("jwt: private key PEM is required for signer")
+	pemData := cfg.PrivateKeyPEM
+	if pemData == "" && cfg.PrivateKeyPath != "" {
+		b, err := os.ReadFile(cfg.PrivateKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("jwt: read private key file %q: %w", cfg.PrivateKeyPath, err)
+		}
+		pemData = string(b)
+	}
+	if pemData == "" {
+		return nil, errors.New("jwt: private key is required for signer (set PrivateKeyPEM or PrivateKeyPath)")
 	}
 	if cfg.SigningKeyID == "" {
 		return nil, errors.New("jwt: signing kid is required for signer")
 	}
-	priv, err := parseRSAPrivateKeyPEM(cfg.PrivateKeyPEM)
+	priv, err := parseRSAPrivateKeyPEM(pemData)
 	if err != nil {
 		return nil, fmt.Errorf("jwt: parse private key: %w", err)
 	}

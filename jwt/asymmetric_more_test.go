@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -164,6 +165,35 @@ func TestSigner_RefreshWrongType(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.Refresh(at) // an access token is not a refresh token
 	assert.ErrorIs(t, err, ErrWrongTokenType)
+}
+
+func TestNewSigner_FromKeyPath(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	require.NoError(t, err)
+	pemb := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+
+	dir := t.TempDir()
+	path := dir + "/issuer-key.pem"
+	require.NoError(t, os.WriteFile(path, pemb, 0o600))
+
+	// Key loaded from a mounted file (docker-compose secret volume pattern).
+	s, err := NewSigner(Config{PrivateKeyPath: path, SigningKeyID: "kid-file", Issuer: "test-issuer"})
+	require.NoError(t, err)
+	require.NotNil(t, s)
+	at, _, err := s.GenerateAccessToken(1, "+7", "d")
+	require.NoError(t, err)
+	assert.NotEmpty(t, at)
+
+	// Missing file -> error.
+	_, err = NewSigner(Config{PrivateKeyPath: dir + "/does-not-exist.pem", SigningKeyID: "k"})
+	assert.Error(t, err)
+
+	// Inline PEM takes precedence over path.
+	s2, err := NewSigner(Config{PrivateKeyPEM: string(pemb), PrivateKeyPath: dir + "/ignored.pem", SigningKeyID: "kid-inline", Issuer: "i"})
+	require.NoError(t, err)
+	assert.Equal(t, "kid-inline", s2.KeyID())
 }
 
 func TestNewSigner_PKCS1(t *testing.T) {

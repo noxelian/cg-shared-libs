@@ -26,8 +26,12 @@ type Config struct {
 	Issuer          string        `yaml:"issuer" env:"JWT_ISSUER" env-default:"cg-platform"`
 
 	// RS256 signing material — set ONLY on the issuer (cg-users auth).
-	PrivateKeyPEM string `yaml:"private_key_pem" env:"JWT_PRIVATE_KEY_PEM"` // PKCS#8 or PKCS#1 RSA private key, PEM-encoded
-	SigningKeyID  string `yaml:"signing_kid" env:"JWT_SIGNING_KID"`         // kid stamped into the token header, e.g. "cg-users-2026-06"
+	// Provide the key either inline (PrivateKeyPEM, e.g. helm --set-file) or as a
+	// mounted file (PrivateKeyPath, e.g. a docker-compose secret volume). PEM
+	// takes precedence when both are set.
+	PrivateKeyPEM  string `yaml:"private_key_pem" env:"JWT_PRIVATE_KEY_PEM"`   // PKCS#8 or PKCS#1 RSA private key, PEM-encoded
+	PrivateKeyPath string `yaml:"private_key_path" env:"JWT_PRIVATE_KEY_PATH"` // path to a PEM key file (mounted secret); read if PrivateKeyPEM is empty
+	SigningKeyID   string `yaml:"signing_kid" env:"JWT_SIGNING_KID"`           // kid stamped into the token header, e.g. "cg-users-2026-06"
 
 	// RS256 verification — set on every verifying service.
 	JWKSURL     string        `yaml:"jwks_url" env:"JWT_JWKS_URL"`
