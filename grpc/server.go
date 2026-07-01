@@ -7,8 +7,8 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/4ubak/cg-shared-libs/logger"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -427,6 +427,12 @@ type AuthInfo struct {
 	OrgType string
 	CityID  int64
 	OrgRole string
+
+	// OrgIDs is the caller's full organization-membership set (Option B).
+	// Empty on legacy single-org tokens; populated from the token's orgs[]
+	// claim once the issuer emits it. orgauth.EnforceOrgMatch prefers this
+	// set over the single OrgID when present.
+	OrgIDs []string
 }
 
 // GetAuthInfo extracts auth info from context
