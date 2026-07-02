@@ -7,7 +7,7 @@ Go 1.25.0.
 ## Установка
 
 ```bash
-go get gitlab.com/xakpro/cg-shared-libs@latest
+go get github.com/4ubak/cg-shared-libs@latest
 ```
 
 ## Пакеты
@@ -33,16 +33,16 @@ go get gitlab.com/xakpro/cg-shared-libs@latest
 | `middleware` | HTTP middleware: CSRF защита, rate limiting |
 | `security` | URL валидация, whitelist хостов, защита от SSRF |
 | `ws` | WebSocket: upgrader, аутентификация, конфигурация |
-| `featureflags` | Feature flags через Redis с кэшированием и gRPC interceptor |
+| `pushpublisher` | Типизированный Kafka-producer для топика `notification.push`. **Dormant**: ни один сервис его не импортирует, продюсера для `notification.push` сейчас нет вообще — консьюмер в cg-communication простаивает. |
 
 ## Использование
 
 ```go
 import (
-    "gitlab.com/xakpro/cg-shared-libs/logger"
-    "gitlab.com/xakpro/cg-shared-libs/postgres"
-    "gitlab.com/xakpro/cg-shared-libs/redis"
-    "gitlab.com/xakpro/cg-shared-libs/kafka"
+    "github.com/4ubak/cg-shared-libs/logger"
+    "github.com/4ubak/cg-shared-libs/postgres"
+    "github.com/4ubak/cg-shared-libs/redis"
+    "github.com/4ubak/cg-shared-libs/kafka"
 )
 
 // Logger

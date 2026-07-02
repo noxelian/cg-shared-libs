@@ -1,6 +1,14 @@
 // Package pushpublisher provides a typed publisher for the notification.push
 // Kafka topic consumed by cg-communication/services/notification.
 //
+// STATUS: dormant. As of 2026-07-02 no service in the monorepo imports this
+// package, so nothing publishes to notification.push — the consumer side in
+// cg-communication (services/notification/internal/consumer/push_consumer.go)
+// currently has no producer at all. Kept (unlike other unwired packages)
+// because the consumer already exists and depends on this exact schema; wire
+// this into whichever service should trigger mobile pushes (orders/booking
+// are the likely candidates) before relying on push notifications working.
+//
 // Usage:
 //
 //	pub := pushpublisher.New(kafkaProducer)

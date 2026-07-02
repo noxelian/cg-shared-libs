@@ -12,7 +12,9 @@ Entry point for a new Claude session in this library. Read before editing.
 |---|---|
 | `logger` | Zap-based structured logger; `logger.New(serviceName)` |
 | `grpc` | gRPC server + client builders, interceptors (auth/logging/recovery/metrics) |
-| `jwt` | JWT signer/validator; service-to-service token issuance |
+| `grpc/adminrbac` | Admin RBAC interceptor (depends on `grpc`) |
+| `grpc/orgauth` | `EnforceOrgMatch` org-scope guards (depends on `grpc`) — locked, don't touch |
+| `jwt` | JWT signer/validator; service-to-service token issuance — locked, don't touch |
 | `kafka` | Kafka producer + consumer wrappers (segmentio/kafka-go under the hood) |
 | `postgres` | pgx pool wrapper, migrations runner |
 | `redis` | go-redis/v9 wrapper |
@@ -21,13 +23,17 @@ Entry point for a new Claude session in this library. Read before editing.
 | `tracing` | OpenTelemetry setup |
 | `audit` | Audit log helpers |
 | `circuitbreaker` | Circuit breaker (used by cg-ai for OpenAI↔Anthropic failover) |
-| `crypto` | Crypto helpers |
-| `featureflags` | Feature flag client |
-| `httpclient` | Resilient HTTP client (retry/backoff) |
+| `crypto` | Encryption + password hashing helpers |
 | `i18n` | i18n helpers |
-| `middleware` | shared middlewares |
+| `middleware` | shared HTTP middlewares (CSRF, rate limiting) |
 | `config` | YAML loader + `env:` tag overrides |
-| `pushpublisher` | Push notification publisher |
+| `ratelimit` | Rate limiting (token bucket, multi-limiter) |
+| `security` | URL validation, host whitelist, SSRF protection |
+| `validation` | Input validation (phone, email, UUID, ...) |
+| `ws` | WebSocket upgrader, auth, config |
+| `pushpublisher` | Typed Kafka publisher for `notification.push`. **Dormant**: no service imports it yet, so nothing currently produces to that topic even though cg-communication's consumer exists. Wire before relying on push notifications. |
+
+Packages removed 2026-07-02 as unwired dead code (zero consumers across all `cg-*` repos, 2-5 months old): `serviceauth` (`grpc/serviceauth`), `featureflags`, `httpclient`, `crypto.MigrateColumn`, `config.HTTPConfig`/`config.ServiceConfig`. Re-add only alongside the consumer that needs them.
 
 ## Domain rules (locked)
 
@@ -49,6 +55,13 @@ Entry point for a new Claude session in this library. Read before editing.
 - YAML `${VAR:default}` interpolation does **not** work — Go's yaml.Unmarshal treats `${...}` as a literal string. Use `env:` tags instead.
 - Kafka `groupID` lacks a sensible default — set it explicitly or consumers silently misbehave.
 - Don't add backwards-compat shims for old `env:` tag schemas; cut over consumers and remove the old field.
+
+## Known architectural debt
+
+This module is a pure library — no `domain`/`usecase`/`handler`/`repo` layers exist here, so the usual layering violations (domain importing pgx/redis/logger, degenerate usecase pass-throughs) don't apply. What's not fixed as of 2026-07-02:
+
+- **`pushpublisher` is dormant.** Fully built and tested, but no service imports it, so nothing produces to the `notification.push` Kafka topic — cg-communication's consumer (`services/notification/internal/consumer/push_consumer.go`) is idle. Kept because the consumer already depends on this exact schema. Do not assume push notifications work end-to-end until a producer is wired in.
+- **Package table above was stale for ~2-5 months** (missing `ratelimit`, `security`, `validation`, `ws`, `grpc/adminrbac`, `grpc/orgauth`) before this pass; if you add a new top-level package, update this table in the same commit.
 
 ## Conventions
 
