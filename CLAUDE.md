@@ -33,7 +33,9 @@ Entry point for a new Claude session in this library. Read before editing.
 | `ws` | WebSocket upgrader, auth, config |
 | `pushpublisher` | Typed Kafka publisher for `notification.push`. **Dormant**: no service imports it yet, so nothing currently produces to that topic even though cg-communication's consumer exists. Wire before relying on push notifications. |
 
-Packages removed 2026-07-02 as unwired dead code (zero consumers across all `cg-*` repos, 2-5 months old): `serviceauth` (`grpc/serviceauth`), `featureflags`, `httpclient`, `crypto.MigrateColumn`, `config.HTTPConfig`/`config.ServiceConfig`. Re-add only alongside the consumer that needs them.
+Packages removed 2026-07-02 as unwired dead code (zero consumers across all `cg-*` repos, 2-5 months old): `serviceauth` (`grpc/serviceauth`), `featureflags`, `httpclient`, `crypto.MigrateColumn`. Re-add only alongside the consumer that needs them.
+
+`config.HTTPConfig`/`config.ServiceConfig` were briefly deleted the same day and then restored (commit `b650fb0` was wrong — cg-agreement's `internal/config/config.go` embeds both directly, pinned at cg-shared-libs v1.36.0; the "zero consumers" claim only checked for it under a different grep pattern). Keep them; if they're ever genuinely unused, land a companion PR moving cg-agreement to local structs first.
 
 ## Domain rules (locked)
 
