@@ -21,6 +21,7 @@ import (
 // ws authenticator accept it unchanged.
 type Validator struct {
 	jwks           *jwksCache
+	resolver       publicKeyResolver // local (in-memory) RS256 key set; takes precedence over jwks when set (issuer self-verify, no network)
 	hmacKey        []byte
 	acceptHS256    bool
 	validMethods   []string
@@ -78,8 +79,10 @@ func NewValidator(cfg Config) (*Validator, error) {
 }
 
 func (v *Validator) keyFunc() gojwt.Keyfunc {
-	var resolver publicKeyResolver
-	if v.jwks != nil {
+	// A local in-memory resolver (issuer self-verify) takes precedence over the
+	// network JWKS cache; fall back to jwks when no local key set was provided.
+	resolver := v.resolver
+	if resolver == nil && v.jwks != nil {
 		resolver = v.jwks
 	}
 	return buildKeyFunc(resolver, v.hmacKey, v.acceptHS256)
