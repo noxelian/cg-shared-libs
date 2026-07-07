@@ -483,9 +483,23 @@ func getOrCreateCircuitBreaker(target string) *circuitbreaker.CircuitBreaker {
 		Name:        target,
 		MaxFailures: 5,
 		Timeout:     30 * time.Second,
+		IsFailure:   isBreakerFailure,
 	})
 	cbRegistry[target] = cb
 	return cb
+}
+
+// isBreakerFailure reports whether a gRPC error signals the *target service*
+// is unhealthy. Caller-fault codes (InvalidArgument, ResourceExhausted, …)
+// mean the service answered and must not open the breaker — otherwise one
+// rate-limited caller blocks every RPC to that target for the breaker timeout.
+func isBreakerFailure(err error) bool {
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.Internal, codes.Unknown, codes.DataLoss:
+		return true
+	default:
+		return false
+	}
 }
 
 // circuitBreakerInterceptor wraps calls with circuit breaker

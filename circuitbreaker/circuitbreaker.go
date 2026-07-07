@@ -43,6 +43,11 @@ type Config struct {
 	MaxFailures      int           // Max failures before opening (default: 5)
 	Timeout          time.Duration // Time to wait before half-open (default: 30s)
 	MaxHalfOpenCalls int           // Max calls in half-open state (default: 3)
+	// IsFailure classifies an error as a service-health failure. Errors it
+	// rejects (returns false) count as successes: the callee answered, so the
+	// breaker must not trip — e.g. a per-caller rate limit or bad argument.
+	// nil means every error is a failure.
+	IsFailure func(err error) bool
 }
 
 // CircuitBreaker implements the circuit breaker pattern
@@ -51,6 +56,7 @@ type CircuitBreaker struct {
 	maxFailures      int
 	timeout          time.Duration
 	maxHalfOpenCalls int
+	isFailure        func(err error) bool
 
 	mu               sync.RWMutex
 	state            State
@@ -71,12 +77,16 @@ func New(cfg Config) *CircuitBreaker {
 	if cfg.MaxHalfOpenCalls <= 0 {
 		cfg.MaxHalfOpenCalls = 3
 	}
+	if cfg.IsFailure == nil {
+		cfg.IsFailure = func(error) bool { return true }
+	}
 
 	cb := &CircuitBreaker{
 		name:             cfg.Name,
 		maxFailures:      cfg.MaxFailures,
 		timeout:          cfg.Timeout,
 		maxHalfOpenCalls: cfg.MaxHalfOpenCalls,
+		isFailure:        cfg.IsFailure,
 		state:            StateClosed,
 	}
 	metrics.SetCircuitBreakerState(cb.name, int(StateClosed))
@@ -129,7 +139,7 @@ func (cb *CircuitBreaker) afterRequest(err error) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
-	if err != nil {
+	if err != nil && cb.isFailure(err) {
 		cb.onFailure()
 	} else {
 		cb.onSuccess()

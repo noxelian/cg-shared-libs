@@ -285,6 +285,73 @@ func TestExecute_SuccessResetFailureCounter(t *testing.T) {
 	assert.Equal(t, circuitbreaker.StateClosed, cb.State())
 }
 
+func TestExecute_IsFailureSkipsClientFaultErrors(t *testing.T) {
+	errClientFault := errors.New("rate limited")
+	cb := circuitbreaker.New(circuitbreaker.Config{
+		Name:        "test",
+		MaxFailures: 2,
+		IsFailure:   func(err error) bool { return !errors.Is(err, errClientFault) },
+	})
+
+	// Client-fault errors propagate to the caller but never open the circuit.
+	for i := 0; i < 10; i++ {
+		err := cb.Execute(context.Background(), func(ctx context.Context) error {
+			return errClientFault
+		})
+		assert.ErrorIs(t, err, errClientFault)
+	}
+	assert.Equal(t, circuitbreaker.StateClosed, cb.State())
+
+	// Real failures still open it.
+	for i := 0; i < 2; i++ {
+		_ = cb.Execute(context.Background(), func(ctx context.Context) error {
+			return errTest
+		})
+	}
+	assert.Equal(t, circuitbreaker.StateOpen, cb.State())
+}
+
+func TestExecute_IsFailureClientFaultResetsFailureCounter(t *testing.T) {
+	errClientFault := errors.New("rate limited")
+	cb := circuitbreaker.New(circuitbreaker.Config{
+		Name:        "test",
+		MaxFailures: 2,
+		IsFailure:   func(err error) bool { return !errors.Is(err, errClientFault) },
+	})
+
+	// One real failure, then a client-fault response: the service answered,
+	// so the failure counter resets like on success.
+	_ = cb.Execute(context.Background(), func(ctx context.Context) error { return errTest })
+	_ = cb.Execute(context.Background(), func(ctx context.Context) error { return errClientFault })
+	_ = cb.Execute(context.Background(), func(ctx context.Context) error { return errTest })
+
+	assert.Equal(t, circuitbreaker.StateClosed, cb.State())
+}
+
+func TestExecute_IsFailureClosesFromHalfOpen(t *testing.T) {
+	errClientFault := errors.New("rate limited")
+	cb := circuitbreaker.New(circuitbreaker.Config{
+		Name:             "test",
+		MaxFailures:      1,
+		Timeout:          1 * time.Millisecond,
+		MaxHalfOpenCalls: 1,
+		IsFailure:        func(err error) bool { return !errors.Is(err, errClientFault) },
+	})
+
+	// Open with a real failure.
+	_ = cb.Execute(context.Background(), func(ctx context.Context) error { return errTest })
+	require.Equal(t, circuitbreaker.StateOpen, cb.State())
+
+	time.Sleep(5 * time.Millisecond)
+
+	// Half-open probe answered with a client-fault error → service is alive → close.
+	err := cb.Execute(context.Background(), func(ctx context.Context) error {
+		return errClientFault
+	})
+	assert.ErrorIs(t, err, errClientFault)
+	assert.Equal(t, circuitbreaker.StateClosed, cb.State())
+}
+
 func TestExecute_ContextPassedToFn(t *testing.T) {
 	cb := circuitbreaker.New(circuitbreaker.Config{Name: "test"})
 
