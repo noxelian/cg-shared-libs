@@ -33,7 +33,7 @@ go get github.com/4ubak/cg-shared-libs@latest
 | `middleware` | HTTP middleware: CSRF защита, rate limiting |
 | `security` | URL валидация, whitelist хостов, защита от SSRF |
 | `ws` | WebSocket: upgrader, аутентификация, конфигурация |
-| `pushpublisher` | Типизированный Kafka-producer для топика `notification.push`. **Dormant**: ни один сервис его не импортирует, продюсера для `notification.push` сейчас нет вообще — консьюмер в cg-communication простаивает. |
+| `pushpublisher` | Типизированный Kafka-producer для топика `notification.push`. Уже импортируется несколькими сервисами (`cg-users/organization`, `cg-services/request+bid`, `cg-communication/chat`) и всегда должен включаться только через service-specific feature flag; перед выводом в прод проверяй chart/env конкретного сервиса и его push-cutover handoff. |
 
 ## Использование
 

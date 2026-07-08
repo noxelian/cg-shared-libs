@@ -14,7 +14,7 @@ Entry point for a new Claude session in this library. Read before editing.
 | `grpc` | gRPC server + client builders, interceptors (auth/logging/recovery/metrics) |
 | `grpc/adminrbac` | Admin RBAC interceptor (depends on `grpc`) |
 | `grpc/orgauth` | `EnforceOrgMatch` org-scope guards (depends on `grpc`) — locked, don't touch |
-| `jwt` | JWT signer/validator; service-to-service token issuance — locked, don't touch |
+| `jwt` | JWT signer/validator; service-to-service token issuance — locked, don't touch. v1.41.0 added `NewLocalRS256Verifier(cfg, keys)` (jwt/localverifier.go): in-memory RS256 self-verification (dual-accepts HS256) so a signer can verify its own tokens without a network round-trip — used by cg-users auth to fix the boot-degrade bug. |
 | `kafka` | Kafka producer + consumer wrappers (segmentio/kafka-go under the hood) |
 | `postgres` | pgx pool wrapper, migrations runner |
 | `redis` | go-redis/v9 wrapper |
@@ -31,7 +31,7 @@ Entry point for a new Claude session in this library. Read before editing.
 | `security` | URL validation, host whitelist, SSRF protection |
 | `validation` | Input validation (phone, email, UUID, ...) |
 | `ws` | WebSocket upgrader, auth, config |
-| `pushpublisher` | Typed Kafka publisher for `notification.push`. **Dormant**: no service imports it yet, so nothing currently produces to that topic even though cg-communication's consumer exists. Wire before relying on push notifications. |
+| `pushpublisher` | Typed Kafka publisher for `notification.push`. **Now imported** by cg-users/organization (`NEW_ORDER_PUSH_ENABLED`/`SERVICE_COMMENT_PUSH_ENABLED`), cg-services request+bid (`AD_CLASSIFIED_PUSH_ENABLED`/`BID_PUSH_ENABLED`), and cg-communication/chat (`CHAT_OFFLINE_PUSH_ENABLED`). All producers are feature-gated, but chart/env values differ by service/environment (chat stage values currently set the flag on; prod handoff says compose leaves it unset), so verify the target env before assuming the topic is idle. |
 
 Packages removed 2026-07-02 as unwired dead code (zero consumers across all `cg-*` repos, 2-5 months old): `serviceauth` (`grpc/serviceauth`), `featureflags`, `httpclient`, `crypto.MigrateColumn`. Re-add only alongside the consumer that needs them.
 
@@ -62,7 +62,7 @@ Packages removed 2026-07-02 as unwired dead code (zero consumers across all `cg-
 
 This module is a pure library — no `domain`/`usecase`/`handler`/`repo` layers exist here, so the usual layering violations (domain importing pgx/redis/logger, degenerate usecase pass-throughs) don't apply. What's not fixed as of 2026-07-02:
 
-- **`pushpublisher` is dormant.** Fully built and tested, but no service imports it, so nothing produces to the `notification.push` Kafka topic — cg-communication's consumer (`services/notification/internal/consumer/push_consumer.go`) is idle. Kept because the consumer already depends on this exact schema. Do not assume push notifications work end-to-end until a producer is wired in.
+- **`pushpublisher` producers are wired but feature-gated.** Imported by cg-users/organization, cg-services (request+bid), and cg-communication/chat; most chart defaults are off, while chat's stage chart is intentionally on. Do not infer live end-to-end push from this library alone: check the per-service chart/env for the target environment and the per-service push-cutover section before relying on `notification.push`.
 - **Package table above was stale for ~2-5 months** (missing `ratelimit`, `security`, `validation`, `ws`, `grpc/adminrbac`, `grpc/orgauth`) before this pass; if you add a new top-level package, update this table in the same commit.
 
 ## Conventions
