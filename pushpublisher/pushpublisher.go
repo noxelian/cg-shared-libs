@@ -32,6 +32,51 @@ import (
 
 const topicPush = "notification.push"
 
+// The keys and routes below are the public mobile-navigation contract for
+// notification.push. Producers must use RouteData instead of legacy `type`
+// discriminators: a route is stable across iOS/Android/Web and identifiers
+// remain explicit UUID fields rather than overloaded legacy integer keys.
+const (
+	PushSchemaKey        = "schema"
+	PushSchemaVersionKey = "schema_version"
+	PushRouteKey         = "route"
+
+	PushSchema        = "ctogram.push.v1"
+	PushSchemaVersion = "1"
+)
+
+// Route identifies the destination a mobile application must resolve after a
+// notification tap. It intentionally describes navigation, not the Kafka
+// domain event: one business event can result in different recipient routes.
+type Route string
+
+const (
+	RouteClientRequestResponses     Route = "client.request.responses"
+	RouteClientPartsRequestDetail   Route = "client.parts_request.detail"
+	RoutePartnerRequestDetail       Route = "partner.request.detail"
+	RouteChatDetail                 Route = "chat.detail"
+	RoutePartnerOrganizationReviews Route = "partner.organization.reviews"
+)
+
+// RouteData creates a versioned and immutable-at-the-boundary payload for
+// Firebase. Reserved routing keys are always owned by this package, so a
+// caller cannot accidentally downgrade the contract while adding entity data.
+func RouteData(route Route, values map[string]string) map[string]string {
+	data := make(map[string]string, len(values)+3)
+	for key, value := range values {
+		switch key {
+		case PushSchemaKey, PushSchemaVersionKey, PushRouteKey:
+			continue
+		default:
+			data[key] = value
+		}
+	}
+	data[PushSchemaKey] = PushSchema
+	data[PushSchemaVersionKey] = PushSchemaVersion
+	data[PushRouteKey] = string(route)
+	return data
+}
+
 // App identifies a mobile application variant.
 type App = string
 

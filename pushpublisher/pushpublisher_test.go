@@ -153,3 +153,24 @@ func TestEvent_TargetAppsSemantics(t *testing.T) {
 		})
 	}
 }
+
+func TestRouteData_UsesVersionedContractAndProtectsReservedKeys(t *testing.T) {
+	data := RouteData(RouteClientRequestResponses, map[string]string{
+		"request_id":     "request-uuid",
+		"schema":         "untrusted",
+		"route":          "untrusted",
+		"schema_version": "0",
+	})
+
+	assert.Equal(t, PushSchema, data[PushSchemaKey])
+	assert.Equal(t, PushSchemaVersion, data[PushSchemaVersionKey])
+	assert.Equal(t, string(RouteClientRequestResponses), data[PushRouteKey])
+	assert.Equal(t, "request-uuid", data["request_id"])
+}
+
+func TestRouteConstants_AreStablePublicContract(t *testing.T) {
+	assert.Equal(t, Route("client.request.responses"), RouteClientRequestResponses)
+	assert.Equal(t, Route("client.parts_request.detail"), RouteClientPartsRequestDetail)
+	assert.Equal(t, Route("partner.request.detail"), RoutePartnerRequestDetail)
+	assert.Equal(t, Route("chat.detail"), RouteChatDetail)
+}
