@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -101,14 +102,16 @@ type fakeDLQPublisher struct {
 	failures int
 	calls    int
 	err      error
+	keys     []string
 	payloads []any
 }
 
-func (p *fakeDLQPublisher) PublishJSON(_ context.Context, _ string, payload any) error {
+func (p *fakeDLQPublisher) PublishJSON(_ context.Context, key string, payload any) error {
 	p.calls++
 	if p.calls <= p.failures {
 		return p.err
 	}
+	p.keys = append(p.keys, key)
 	p.payloads = append(p.payloads, payload)
 	return nil
 }
@@ -260,6 +263,31 @@ func TestHandleWithRetry_DLQRedactsOriginalValue(t *testing.T) {
 	assert.NotContains(t, string(payload.OriginalValue), "private")
 }
 
+func TestHandleWithRetry_DLQRedactsOriginalKey(t *testing.T) {
+	dlq := &fakeDLQPublisher{}
+	c := makeConsumer(0, dlq)
+	c.dlqKeyRedactor = func(_ context.Context, key []byte) ([]byte, error) {
+		assert.Equal(t, "private-key", string(key))
+		return nil, nil
+	}
+	msg := makeMsg(`{"request_id":"request-1"}`)
+	msg.Key = []byte("private-key")
+
+	commit, err := c.handleWithRetry(
+		context.Background(),
+		msg,
+		func(context.Context, kafka.Message) error { return errors.New("model unavailable") },
+	)
+
+	assert.True(t, commit)
+	assert.Error(t, err)
+	require.Equal(t, []string{""}, dlq.keys)
+	require.Len(t, dlq.payloads, 1)
+	payload, ok := dlq.payloads[0].(dlqPayload)
+	require.True(t, ok)
+	assert.Empty(t, payload.OriginalKey)
+}
+
 func TestHandleWithRetry_DLQRedactionFailureRetainsSourceOffset(t *testing.T) {
 	dlq := &fakeDLQPublisher{}
 	c := makeConsumer(0, dlq)
@@ -344,24 +372,132 @@ func TestWithDLQValueRedactorConfiguresConsumer(t *testing.T) {
 	require.NotNil(t, consumer.dlqValueRedactor)
 }
 
+func TestEventDecodeErrorDispositionIsOptIn(t *testing.T) {
+	tests := []struct {
+		name          string
+		options       []ConsumerOption
+		wantUnmarshal bool
+	}{
+		{
+			name:          "default preserves immediate commit behavior",
+			wantUnmarshal: true,
+		},
+		{
+			name: "opt in routes through retry and DLQ",
+			options: []ConsumerOption{WithEventDecodeErrorsToDLQ(
+				func(_ context.Context, value []byte) (json.RawMessage, error) {
+					return json.RawMessage(value), nil
+				},
+			)},
+			wantUnmarshal: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			consumer := &Consumer{}
+			for _, option := range tt.options {
+				option(consumer)
+			}
+
+			_, err := consumer.decodeEvent([]byte(`{"private_note":"do not echo"`))
+			if err == nil {
+				t.Fatal("expected decode error")
+			}
+			if got := IsUnmarshalError(err); got != tt.wantUnmarshal {
+				t.Fatalf("unmarshal disposition = %t, want %t: %v", got, tt.wantUnmarshal, err)
+			}
+			if strings.Contains(err.Error(), "do not echo") {
+				t.Fatalf("decode error leaked source value: %v", err)
+			}
+		})
+	}
+}
+
+func TestWithEventDecodeErrorsToDLQFailsClosedWithoutValueRedactor(t *testing.T) {
+	consumer := &Consumer{}
+	WithEventDecodeErrorsToDLQ(nil)(consumer)
+	consumer.finalizeOptions()
+
+	require.NotNil(t, consumer.dlqValueRedactor)
+	require.NotNil(t, consumer.dlqKeyRedactor)
+	_, err := consumer.dlqValue(context.Background(), []byte(`{"note":"private"}`))
+	require.Error(t, err)
+	key, err := consumer.dlqKey(context.Background(), []byte("private-key"))
+	require.NoError(t, err)
+	assert.Empty(t, key)
+}
+
+func TestWithEventDecodeErrorsToDLQIsIndependentOfOptionOrder(t *testing.T) {
+	safeValue := func(context.Context, []byte) (json.RawMessage, error) {
+		return json.RawMessage(`{"type":"invalid","data":{}}`), nil
+	}
+	consumer := &Consumer{}
+	WithEventDecodeErrorsToDLQ(safeValue)(consumer)
+	WithDLQValueRedactor(nil)(consumer)
+	WithDLQKeyRedactor(nil)(consumer)
+	consumer.finalizeOptions()
+
+	value, err := consumer.dlqValue(context.Background(), []byte(`{"note":"private"}`))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"type":"invalid","data":{}}`, string(value))
+	key, err := consumer.dlqKey(context.Background(), []byte("private-key"))
+	require.NoError(t, err)
+	assert.Empty(t, key)
+}
+
+func TestEventDecodeErrorsToDLQDoNotLeakMalformedFields(t *testing.T) {
+	dlq := &fakeDLQPublisher{}
+	c := makeConsumer(0, dlq)
+	WithEventDecodeErrorsToDLQ(func(context.Context, []byte) (json.RawMessage, error) {
+		return json.RawMessage(`{"type":"invalid","data":{}}`), nil
+	})(c)
+	c.finalizeOptions()
+	msg := makeMsg(`{"type":"request.created","timestamp":"private timestamp","data":{}}`)
+	msg.Key = []byte("private key")
+
+	_, decodeErr := c.decodeEvent(msg.Value)
+	require.Error(t, decodeErr)
+	assert.NotContains(t, decodeErr.Error(), "private timestamp")
+
+	commit, err := c.handleWithRetry(context.Background(), msg, func(context.Context, kafka.Message) error {
+		return decodeErr
+	})
+	assert.True(t, commit)
+	assert.Error(t, err)
+	require.Equal(t, []string{""}, dlq.keys)
+	require.Len(t, dlq.payloads, 1)
+	payload, ok := dlq.payloads[0].(dlqPayload)
+	require.True(t, ok)
+	assert.Empty(t, payload.OriginalKey)
+	assert.JSONEq(t, `{"type":"invalid","data":{}}`, string(payload.OriginalValue))
+	assert.Equal(t, "event envelope decode failed", payload.ErrorString)
+	encoded, marshalErr := json.Marshal(payload)
+	require.NoError(t, marshalErr)
+	assert.NotContains(t, string(encoded), "private timestamp")
+	assert.NotContains(t, string(encoded), "private key")
+}
+
 func TestHandleWithRetry_RetryUntilCanceledDoesNotCommitOrDLQ(t *testing.T) {
 	c := makeConsumer(1, nil)
 	c.retryCfg.backoffMin = time.Millisecond
 	c.retryCfg.backoffMax = time.Millisecond
 	msg := makeMsg(`{"id":"1"}`)
 	dependencyErr := errors.New("redis unavailable")
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	var calls int32
 	commit, err := c.handleWithRetry(ctx, msg, func(_ context.Context, _ kafka.Message) error {
-		atomic.AddInt32(&calls, 1)
+		if atomic.AddInt32(&calls, 1) == 4 {
+			cancel()
+		}
 		return RetryUntilCanceled(dependencyErr)
 	})
 
 	assert.False(t, commit)
-	assert.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Greater(t, calls, int32(c.retryCfg.maxRetries+1))
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, int32(4), calls)
 }
 
 func TestHandleWithRetry_RetryUntilCanceledThenSuccessCommits(t *testing.T) {

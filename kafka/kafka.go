@@ -379,13 +379,16 @@ func (p *Producer) Close() error {
 
 // Consumer wraps kafka.Reader
 type Consumer struct {
-	reader           *kafka.Reader
-	topic            string
-	groupID          string
-	retryCfg         retryConfig
-	dlqProducer      dlqPublisher // nil when DLQ is disabled
-	dlqTopic         string
-	dlqValueRedactor DLQValueRedactor
+	reader                 *kafka.Reader
+	topic                  string
+	groupID                string
+	retryCfg               retryConfig
+	dlqProducer            dlqPublisher // nil when DLQ is disabled
+	dlqTopic               string
+	dlqValueRedactor       DLQValueRedactor
+	dlqKeyRedactor         DLQKeyRedactor
+	eventDecodeErrorsToDLQ bool
+	eventDecodeRedactor    DLQValueRedactor
 }
 
 // DLQValueRedactor transforms source message bytes before they are persisted
@@ -396,14 +399,51 @@ type Consumer struct {
 // unbounded network I/O.
 type DLQValueRedactor func(ctx context.Context, value []byte) (json.RawMessage, error)
 
+// DLQKeyRedactor transforms a source Kafka key before it is used as the DLQ
+// record key and original_key field. Returning nil drops the key.
+type DLQKeyRedactor func(ctx context.Context, key []byte) ([]byte, error)
+
 // ConsumerOption configures behavior that is specific to one consumer.
 type ConsumerOption func(*Consumer)
+
+type eventDecodeError struct {
+	cause error
+}
+
+func (e *eventDecodeError) Error() string {
+	return "event envelope decode failed"
+}
+
+func (e *eventDecodeError) Unwrap() error {
+	return e.cause
+}
 
 // WithDLQValueRedactor configures a fail-closed transform for original_value
 // in DLQ records. It has no effect while DLQ is disabled.
 func WithDLQValueRedactor(redactor DLQValueRedactor) ConsumerOption {
 	return func(consumer *Consumer) {
 		consumer.dlqValueRedactor = redactor
+	}
+}
+
+// WithDLQKeyRedactor configures a fail-closed transform for source Kafka keys.
+// A redaction error retains the source offset rather than using the raw key.
+func WithDLQKeyRedactor(redactor DLQKeyRedactor) ConsumerOption {
+	return func(consumer *Consumer) {
+		consumer.dlqKeyRedactor = redactor
+	}
+}
+
+// WithEventDecodeErrorsToDLQ routes malformed top-level event envelopes
+// through bounded retry and the configured DLQ path. By default ConsumeEvent
+// keeps its historical behavior and commits malformed envelopes immediately.
+// The required value redactor handles source bytes that cannot be trusted to
+// match the event schema. Source keys are dropped so they cannot bypass value
+// redaction. A nil redactor fails closed and retains the source offset.
+func WithEventDecodeErrorsToDLQ(redactor DLQValueRedactor) ConsumerOption {
+	return func(consumer *Consumer) {
+		consumer.eventDecodeErrorsToDLQ = true
+		consumer.eventDecodeRedactor = redactor
 	}
 }
 
@@ -456,7 +496,25 @@ func NewConsumerWithOptions(cfg Config, topic string, options ...ConsumerOption)
 			option(consumer)
 		}
 	}
+	consumer.finalizeOptions()
 	return consumer
+}
+
+func (c *Consumer) finalizeOptions() {
+	if !c.eventDecodeErrorsToDLQ {
+		return
+	}
+	if c.eventDecodeRedactor == nil {
+		c.eventDecodeRedactor = func(context.Context, []byte) (json.RawMessage, error) {
+			return nil, fmt.Errorf("event decode DLQ value redactor is required")
+		}
+	}
+	// Enforce these invariants after all public options have run so option order
+	// cannot restore raw malformed values or source keys.
+	c.dlqValueRedactor = c.eventDecodeRedactor
+	c.dlqKeyRedactor = func(context.Context, []byte) ([]byte, error) {
+		return nil, nil
+	}
 }
 
 // MessageHandler handles consumed messages
@@ -506,17 +564,29 @@ func (c *Consumer) Consume(ctx context.Context, handler MessageHandler) error {
 	}
 }
 
-// ConsumeEvent consumes and parses events. If the top-level event envelope
-// cannot be decoded, it returns an UnmarshalError so Consume commits the
-// offset and records the metric rather than retrying indefinitely.
+// ConsumeEvent consumes and parses events. By default, an invalid top-level
+// envelope is committed as an UnmarshalError. WithEventDecodeErrorsToDLQ opts
+// into bounded retry followed by the configured DLQ path instead.
 func (c *Consumer) ConsumeEvent(ctx context.Context, handler func(ctx context.Context, event Event) error) error {
 	return c.Consume(ctx, func(ctx context.Context, msg kafka.Message) error {
-		var event Event
-		if err := json.Unmarshal(msg.Value, &event); err != nil {
-			return NewUnmarshalError(fmt.Errorf("unmarshal event envelope: %w", err))
+		event, err := c.decodeEvent(msg.Value)
+		if err != nil {
+			return err
 		}
 		return handler(ctx, event)
 	})
+}
+
+func (c *Consumer) decodeEvent(value []byte) (Event, error) {
+	var event Event
+	if err := json.Unmarshal(value, &event); err != nil {
+		decodeErr := &eventDecodeError{cause: err}
+		if c.eventDecodeErrorsToDLQ {
+			return Event{}, decodeErr
+		}
+		return Event{}, NewUnmarshalError(decodeErr)
+	}
+	return event, nil
 }
 
 // Close closes the consumer

@@ -84,20 +84,21 @@ func sendToDLQ(
 	dlqTopic string,
 	topic string,
 	msg kafka.Message,
+	originalKey []byte,
 	originalValue json.RawMessage,
 	handlerErr error,
 	retryCount int,
 ) error {
 	payload := dlqPayload{
 		OriginalTopic: topic,
-		OriginalKey:   string(msg.Key),
+		OriginalKey:   string(originalKey),
 		OriginalValue: originalValue,
 		ErrorString:   handlerErr.Error(),
 		RetryCount:    retryCount,
 		FailedAt:      time.Now().UTC(),
 	}
 
-	if err := prod.PublishJSON(ctx, string(msg.Key), payload); err != nil {
+	if err := prod.PublishJSON(ctx, string(originalKey), payload); err != nil {
 		return fmt.Errorf("publish to DLQ: %w", err)
 	}
 
@@ -140,9 +141,24 @@ func (c *Consumer) sendToDLQUntilSuccess(
 			}
 			continue
 		}
+		originalKey, redactErr := c.dlqKey(ctx, msg.Key)
+		if redactErr != nil {
+			if !retainingOffset {
+				metrics.RetainKafkaConsumerOffset(c.topic, c.groupID)
+				retainingOffset = true
+			}
+			c.logRetainedDLQRetry("kafka DLQ redaction failed; source offset retained", redactErr, msg, attempt)
+			attempt++
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(c.retryCfg.calcBackoff(attempt - 1)):
+			}
+			continue
+		}
 
 		err := sendToDLQ(
-			ctx, c.dlqProducer, c.dlqTopic, c.topic, msg, originalValue, handlerErr, c.retryCfg.maxRetries,
+			ctx, c.dlqProducer, c.dlqTopic, c.topic, msg, originalKey, originalValue, handlerErr, c.retryCfg.maxRetries,
 		)
 		if err == nil {
 			metrics.RecordKafkaDLQ(c.topic, c.groupID)
@@ -163,6 +179,20 @@ func (c *Consumer) sendToDLQUntilSuccess(
 		case <-time.After(delay):
 		}
 	}
+}
+
+func (c *Consumer) dlqKey(ctx context.Context, key []byte) ([]byte, error) {
+	if c.dlqKeyRedactor == nil {
+		return key, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	redacted, err := c.dlqKeyRedactor(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("redact DLQ key: %w", err)
+	}
+	return redacted, nil
 }
 
 func (c *Consumer) dlqValue(ctx context.Context, value []byte) (json.RawMessage, error) {
