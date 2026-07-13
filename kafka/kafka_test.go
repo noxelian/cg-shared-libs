@@ -109,6 +109,15 @@ func TestIsUnmarshalError_Nil(t *testing.T) {
 	assert.False(t, IsUnmarshalError(nil))
 }
 
+func TestRetryUntilCanceledPreservesCauseAndDisposition(t *testing.T) {
+	cause := errors.New("required dependency unavailable")
+	err := fmt.Errorf("consumer: %w", RetryUntilCanceled(cause))
+
+	assert.True(t, IsRetryUntilCanceled(err))
+	assert.ErrorIs(t, err, cause)
+	assert.Nil(t, RetryUntilCanceled(nil))
+}
+
 // --- FlexibleTime ---
 
 func TestFlexibleTime_RFC3339(t *testing.T) {

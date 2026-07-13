@@ -33,6 +33,14 @@ it remaps keys under every modulo-based partitioner and can let new events pass
 older records on the previous partition. Capacity changes require a controlled
 drain and versioned-topic cutover, not in-place partition expansion.
 
+Consumers normally exhaust bounded retries and then commit or route to DLQ.
+When a valid message is blocked by a required dependency and commit would lose
+it, the handler may return `kafka.RetryUntilCanceled(err)`. That explicit
+disposition retains the offset and retries with bounded backoff until recovery
+or consumer shutdown; it must not be used for malformed or poison messages.
+Operators can alert on `kafka_consumer_retained_offsets` and diagnose retry
+volume with `kafka_consumer_retained_retries_total`.
+
 ## How realtime events flow to the browser
 
 ```

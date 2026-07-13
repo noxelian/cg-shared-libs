@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/segmentio/kafka-go"
 	"github.com/4ubak/cg-shared-libs/logger"
 	"github.com/4ubak/cg-shared-libs/metrics"
+	"github.com/segmentio/kafka-go"
 	"go.uber.org/zap"
 )
 
@@ -116,17 +116,64 @@ func sendToDLQ(
 //   - (true, err)  — max retries exhausted or DLQ path taken; caller should commit.
 //   - (false, err) — context cancelled; caller should propagate.
 //
+// Errors marked with RetryUntilCanceled bypass finite retry/DLQ handling and
+// return (false, ctx.Err()) only when the consumer is shutting down.
+//
 // The boolean indicates "commit the offset".
 func (c *Consumer) handleWithRetry(
 	ctx context.Context,
 	msg kafka.Message,
 	handler MessageHandler,
 ) (commit bool, err error) {
-	for attempt := 0; attempt <= c.retryCfg.maxRetries; attempt++ {
+	normalRetries := 0
+	nonCommittableRetries := 0
+	retainingOffset := false
+	defer func() {
+		if retainingOffset {
+			metrics.ReleaseKafkaConsumerOffset(c.topic, c.groupID)
+		}
+	}()
+	for {
 		handlerErr := handler(ctx, msg)
 		if handlerErr == nil {
 			// Success — reset happens implicitly (no state to reset per-message).
 			return true, nil
+		}
+
+		if IsRetryUntilCanceled(handlerErr) {
+			if !retainingOffset {
+				metrics.RetainKafkaConsumerOffset(c.topic, c.groupID)
+				retainingOffset = true
+			}
+			delay := c.retryCfg.calcBackoff(nonCommittableRetries)
+			nonCommittableRetries++
+			metrics.RecordKafkaConsumerRetainedRetry(c.topic, c.groupID)
+			fields := []zap.Field{
+				zap.Error(handlerErr),
+				zap.String("topic", c.topic),
+				zap.String("consumer_group", c.groupID),
+				zap.Int("partition", msg.Partition),
+				zap.Int64("offset", msg.Offset),
+				zap.Int("attempt", nonCommittableRetries),
+				zap.Duration("backoff", delay),
+			}
+			if nonCommittableRetries == 1 || nonCommittableRetries%10 == 0 {
+				logger.Error("kafka handler blocked by required dependency; offset retained", fields...)
+			} else {
+				logger.Debug("kafka retained-offset retry", fields...)
+			}
+
+			select {
+			case <-ctx.Done():
+				return false, ctx.Err()
+			case <-time.After(delay):
+			}
+			continue
+		}
+
+		if retainingOffset {
+			metrics.ReleaseKafkaConsumerOffset(c.topic, c.groupID)
+			retainingOffset = false
 		}
 
 		// Unmarshal errors are permanent; commit immediately without retrying.
@@ -143,14 +190,15 @@ func (c *Consumer) handleWithRetry(
 		}
 
 		// Transient error on a non-final attempt — back off and retry.
-		if attempt < c.retryCfg.maxRetries {
-			delay := c.retryCfg.calcBackoff(attempt)
+		if normalRetries < c.retryCfg.maxRetries {
+			delay := c.retryCfg.calcBackoff(normalRetries)
+			normalRetries++
 			metrics.RecordKafkaConsumerRetry(c.topic, c.groupID)
 			logger.Warn("kafka handler error, retrying with backoff",
 				zap.Error(handlerErr),
 				zap.String("topic", c.topic),
 				zap.Int64("offset", msg.Offset),
-				zap.Int("attempt", attempt+1),
+				zap.Int("attempt", normalRetries),
 				zap.Int("max_retries", c.retryCfg.maxRetries),
 				zap.Duration("backoff", delay),
 			)
@@ -180,7 +228,4 @@ func (c *Consumer) handleWithRetry(
 		// still commit so we do not replay the message indefinitely.
 		return true, fmt.Errorf("max retries (%d) exhausted: %w", c.retryCfg.maxRetries, handlerErr)
 	}
-
-	// Unreachable — the loop always returns from within.
-	return true, nil
 }

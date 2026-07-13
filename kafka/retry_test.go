@@ -187,6 +187,58 @@ func TestHandleWithRetry_ContextCancelledDuringBackoff(t *testing.T) {
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
+func TestHandleWithRetry_RetryUntilCanceledDoesNotCommitOrDLQ(t *testing.T) {
+	c := makeConsumer(1, nil)
+	c.retryCfg.backoffMin = time.Millisecond
+	c.retryCfg.backoffMax = time.Millisecond
+	msg := makeMsg(`{"id":"1"}`)
+	dependencyErr := errors.New("redis unavailable")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	defer cancel()
+
+	var calls int32
+	commit, err := c.handleWithRetry(ctx, msg, func(_ context.Context, _ kafka.Message) error {
+		atomic.AddInt32(&calls, 1)
+		return RetryUntilCanceled(dependencyErr)
+	})
+
+	assert.False(t, commit)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Greater(t, calls, int32(c.retryCfg.maxRetries+1))
+}
+
+func TestHandleWithRetry_RetryUntilCanceledThenSuccessCommits(t *testing.T) {
+	c := makeConsumer(1, nil)
+	msg := makeMsg(`{"id":"1"}`)
+	var calls int32
+
+	commit, err := c.handleWithRetry(context.Background(), msg, func(_ context.Context, _ kafka.Message) error {
+		if atomic.AddInt32(&calls, 1) < 4 {
+			return RetryUntilCanceled(errors.New("redis unavailable"))
+		}
+		return nil
+	})
+
+	assert.True(t, commit)
+	assert.NoError(t, err)
+	assert.Equal(t, int32(4), calls)
+}
+
+func TestHandleWithRetry_RetryUntilCanceledOverridesUnmarshalDisposition(t *testing.T) {
+	c := makeConsumer(1, nil)
+	c.retryCfg.backoffMin = time.Millisecond
+	c.retryCfg.backoffMax = time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	commit, err := c.handleWithRetry(ctx, makeMsg(`bad json`), func(_ context.Context, _ kafka.Message) error {
+		return RetryUntilCanceled(NewUnmarshalError(errors.New("dependency blocked decode")))
+	})
+
+	assert.False(t, commit)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
 // --- DLQ payload marshalling ---
 
 func TestDLQPayload_MarshalRoundtrip(t *testing.T) {

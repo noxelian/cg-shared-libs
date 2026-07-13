@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/4ubak/cg-shared-libs/logger"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/4ubak/cg-shared-libs/logger"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"
@@ -283,6 +283,22 @@ var (
 		[]string{"topic", "consumer_group"},
 	)
 
+	kafkaConsumerRetainedRetries = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_consumer_retained_retries_total",
+			Help: "Total retries that retained a Kafka offset because a required dependency was unavailable",
+		},
+		[]string{"topic", "consumer_group"},
+	)
+
+	kafkaConsumerRetainedOffsets = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "kafka_consumer_retained_offsets",
+			Help: "Current Kafka messages retaining their offset while a required dependency is unavailable",
+		},
+		[]string{"topic", "consumer_group"},
+	)
+
 	kafkaDLQTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "kafka_consumer_dlq_total",
@@ -375,6 +391,23 @@ func RecordKafkaUnmarshalError(topic, consumerGroup string) {
 // handler error on the given topic/consumer-group pair.
 func RecordKafkaConsumerRetry(topic, consumerGroup string) {
 	kafkaConsumerRetries.WithLabelValues(topic, consumerGroup).Inc()
+}
+
+// RecordKafkaConsumerRetainedRetry records a retry that deliberately keeps the
+// current offset instead of entering finite retry/DLQ handling.
+func RecordKafkaConsumerRetainedRetry(topic, consumerGroup string) {
+	kafkaConsumerRetainedRetries.WithLabelValues(topic, consumerGroup).Inc()
+}
+
+// RetainKafkaConsumerOffset tracks a message currently blocked on a required
+// dependency. Every successful retain must be paired with Release.
+func RetainKafkaConsumerOffset(topic, consumerGroup string) {
+	kafkaConsumerRetainedOffsets.WithLabelValues(topic, consumerGroup).Inc()
+}
+
+// ReleaseKafkaConsumerOffset clears one currently retained message.
+func ReleaseKafkaConsumerOffset(topic, consumerGroup string) {
+	kafkaConsumerRetainedOffsets.WithLabelValues(topic, consumerGroup).Dec()
 }
 
 // RecordKafkaDLQ records a message that has been routed to the dead-letter

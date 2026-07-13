@@ -98,6 +98,38 @@ func IsUnmarshalError(err error) bool {
 	return errors.As(err, &target)
 }
 
+// retryUntilCanceledError marks an infrastructure failure for which committing
+// the offset would lose a valid message. The consumer retries it with bounded
+// backoff until the handler succeeds or the consumer context is cancelled.
+type retryUntilCanceledError struct {
+	cause error
+}
+
+func (e *retryUntilCanceledError) Error() string {
+	return fmt.Sprintf("retry until canceled: %v", e.cause)
+}
+
+func (e *retryUntilCanceledError) Unwrap() error {
+	return e.cause
+}
+
+// RetryUntilCanceled marks err as non-committable. Use this only for a valid
+// message blocked by a required dependency, where DLQ/commit would be data
+// loss. Poison messages and ordinary transient failures must use normal errors.
+func RetryUntilCanceled(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &retryUntilCanceledError{cause: err}
+}
+
+// IsRetryUntilCanceled reports whether err carries the non-committable retry
+// disposition, including through additional wrapping.
+func IsRetryUntilCanceled(err error) bool {
+	var target *retryUntilCanceledError
+	return errors.As(err, &target)
+}
+
 // Config holds Kafka configuration
 type Config struct {
 	Brokers       []string      `yaml:"brokers" env:"KAFKA_BROKERS" env-default:"localhost:9092"`
@@ -398,6 +430,7 @@ type MessageHandler func(ctx context.Context, msg kafka.Message) error
 
 // Consume starts consuming messages with exponential backoff on transient
 // errors and optional dead-letter queue routing when max retries are exhausted.
+// RetryUntilCanceled errors retain the current offset until recovery or shutdown.
 func (c *Consumer) Consume(ctx context.Context, handler MessageHandler) error {
 	for {
 		select {
