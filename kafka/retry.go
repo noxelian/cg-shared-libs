@@ -84,13 +84,14 @@ func sendToDLQ(
 	dlqTopic string,
 	topic string,
 	msg kafka.Message,
+	originalValue json.RawMessage,
 	handlerErr error,
 	retryCount int,
 ) error {
 	payload := dlqPayload{
 		OriginalTopic: topic,
 		OriginalKey:   string(msg.Key),
-		OriginalValue: json.RawMessage(msg.Value),
+		OriginalValue: originalValue,
 		ErrorString:   handlerErr.Error(),
 		RetryCount:    retryCount,
 		FailedAt:      time.Now().UTC(),
@@ -124,8 +125,24 @@ func (c *Consumer) sendToDLQUntilSuccess(
 	}()
 
 	for {
+		originalValue, redactErr := c.dlqValue(ctx, msg.Value)
+		if redactErr != nil {
+			if !retainingOffset {
+				metrics.RetainKafkaConsumerOffset(c.topic, c.groupID)
+				retainingOffset = true
+			}
+			c.logRetainedDLQRetry("kafka DLQ redaction failed; source offset retained", redactErr, msg, attempt)
+			attempt++
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(c.retryCfg.calcBackoff(attempt - 1)):
+			}
+			continue
+		}
+
 		err := sendToDLQ(
-			ctx, c.dlqProducer, c.dlqTopic, c.topic, msg, handlerErr, c.retryCfg.maxRetries,
+			ctx, c.dlqProducer, c.dlqTopic, c.topic, msg, originalValue, handlerErr, c.retryCfg.maxRetries,
 		)
 		if err == nil {
 			metrics.RecordKafkaDLQ(c.topic, c.groupID)
@@ -137,29 +154,52 @@ func (c *Consumer) sendToDLQUntilSuccess(
 			retainingOffset = true
 		}
 		delay := c.retryCfg.calcBackoff(attempt)
+		c.logRetainedDLQRetry("kafka DLQ unavailable; source offset retained", err, msg, attempt)
 		attempt++
-		metrics.RecordKafkaConsumerRetainedRetry(c.topic, c.groupID)
-		fields := []zap.Field{
-			zap.Error(err),
-			zap.String("topic", c.topic),
-			zap.String("dlq_topic", c.dlqTopic),
-			zap.String("consumer_group", c.groupID),
-			zap.Int("partition", msg.Partition),
-			zap.Int64("offset", msg.Offset),
-			zap.Int("attempt", attempt),
-			zap.Duration("backoff", delay),
-		}
-		if attempt == 1 || attempt%10 == 0 {
-			logger.Error("kafka DLQ unavailable; source offset retained", fields...)
-		} else {
-			logger.Debug("kafka DLQ retained-offset retry", fields...)
-		}
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(delay):
 		}
+	}
+}
+
+func (c *Consumer) dlqValue(ctx context.Context, value []byte) (json.RawMessage, error) {
+	if c.dlqValueRedactor == nil {
+		return json.RawMessage(value), nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	redacted, err := c.dlqValueRedactor(ctx, value)
+	if err != nil {
+		return nil, fmt.Errorf("redact DLQ value: %w", err)
+	}
+	if !json.Valid(redacted) {
+		return nil, fmt.Errorf("redact DLQ value: result is not valid JSON")
+	}
+	return redacted, nil
+}
+
+func (c *Consumer) logRetainedDLQRetry(message string, err error, msg kafka.Message, attempt int) {
+	delay := c.retryCfg.calcBackoff(attempt)
+	attempt++
+	metrics.RecordKafkaConsumerRetainedRetry(c.topic, c.groupID)
+	fields := []zap.Field{
+		zap.Error(err),
+		zap.String("topic", c.topic),
+		zap.String("dlq_topic", c.dlqTopic),
+		zap.String("consumer_group", c.groupID),
+		zap.Int("partition", msg.Partition),
+		zap.Int64("offset", msg.Offset),
+		zap.Int("attempt", attempt),
+		zap.Duration("backoff", delay),
+	}
+	if attempt == 1 || attempt%10 == 0 {
+		logger.Error(message, fields...)
+	} else {
+		logger.Debug(message, fields...)
 	}
 }
 

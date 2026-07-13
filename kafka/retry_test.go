@@ -101,13 +101,15 @@ type fakeDLQPublisher struct {
 	failures int
 	calls    int
 	err      error
+	payloads []any
 }
 
-func (p *fakeDLQPublisher) PublishJSON(context.Context, string, any) error {
+func (p *fakeDLQPublisher) PublishJSON(_ context.Context, _ string, payload any) error {
 	p.calls++
 	if p.calls <= p.failures {
 		return p.err
 	}
+	p.payloads = append(p.payloads, payload)
 	return nil
 }
 
@@ -232,6 +234,114 @@ func TestHandleWithRetry_DLQRecoveryAllowsCommit(t *testing.T) {
 	assert.True(t, commit)
 	assert.ErrorIs(t, err, handlerErr)
 	assert.Equal(t, 3, dlq.calls)
+}
+
+func TestHandleWithRetry_DLQRedactsOriginalValue(t *testing.T) {
+	dlq := &fakeDLQPublisher{}
+	c := makeConsumer(0, dlq)
+	c.dlqValueRedactor = func(_ context.Context, value []byte) (json.RawMessage, error) {
+		assert.JSONEq(t, `{"request_id":"request-1","note":"private"}`, string(value))
+		return json.RawMessage(`{"request_id":"request-1"}`), nil
+	}
+	handlerErr := errors.New("model unavailable")
+
+	commit, err := c.handleWithRetry(
+		context.Background(),
+		makeMsg(`{"request_id":"request-1","note":"private"}`),
+		func(context.Context, kafka.Message) error { return handlerErr },
+	)
+
+	assert.True(t, commit)
+	assert.ErrorIs(t, err, handlerErr)
+	require.Len(t, dlq.payloads, 1)
+	payload, ok := dlq.payloads[0].(dlqPayload)
+	require.True(t, ok)
+	assert.JSONEq(t, `{"request_id":"request-1"}`, string(payload.OriginalValue))
+	assert.NotContains(t, string(payload.OriginalValue), "private")
+}
+
+func TestHandleWithRetry_DLQRedactionFailureRetainsSourceOffset(t *testing.T) {
+	dlq := &fakeDLQPublisher{}
+	c := makeConsumer(0, dlq)
+	c.retryCfg.backoffMin = time.Millisecond
+	c.retryCfg.backoffMax = time.Millisecond
+	c.dlqValueRedactor = func(context.Context, []byte) (json.RawMessage, error) {
+		return nil, errors.New("cannot produce safe value")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	commit, err := c.handleWithRetry(ctx, makeMsg(`{"note":"private"}`), func(context.Context, kafka.Message) error {
+		return errors.New("model unavailable")
+	})
+
+	assert.False(t, commit)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Zero(t, dlq.calls, "raw source value must never reach the DLQ publisher")
+}
+
+func TestHandleWithRetry_InvalidRedactedJSONRetainsSourceOffset(t *testing.T) {
+	dlq := &fakeDLQPublisher{}
+	c := makeConsumer(0, dlq)
+	c.retryCfg.backoffMin = time.Millisecond
+	c.retryCfg.backoffMax = time.Millisecond
+	c.dlqValueRedactor = func(context.Context, []byte) (json.RawMessage, error) {
+		return json.RawMessage(`not-json`), nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	commit, err := c.handleWithRetry(ctx, makeMsg(`{"note":"private"}`), func(context.Context, kafka.Message) error {
+		return errors.New("model unavailable")
+	})
+
+	assert.False(t, commit)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Zero(t, dlq.calls, "invalid redacted JSON must never reach the DLQ publisher")
+}
+
+func TestHandleWithRetry_CancelledContextStopsBlockedDLQRedactor(t *testing.T) {
+	dlq := &fakeDLQPublisher{}
+	c := makeConsumer(0, dlq)
+	started := make(chan struct{})
+	c.dlqValueRedactor = func(ctx context.Context, _ []byte) (json.RawMessage, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		commit, err := c.handleWithRetry(ctx, makeMsg(`{"note":"private"}`), func(context.Context, kafka.Message) error {
+			return errors.New("model unavailable")
+		})
+		assert.False(t, commit)
+		assert.ErrorIs(t, err, context.Canceled)
+	}()
+
+	<-started
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("consumer did not stop after redactor context cancellation")
+	}
+	assert.Zero(t, dlq.calls)
+}
+
+func TestWithDLQValueRedactorConfiguresConsumer(t *testing.T) {
+	redactor := func(_ context.Context, value []byte) (json.RawMessage, error) {
+		return json.RawMessage(value), nil
+	}
+	consumer := NewConsumerWithOptions(
+		Config{Brokers: []string{"localhost:9092"}},
+		"test.topic",
+		WithDLQValueRedactor(redactor),
+	)
+	t.Cleanup(func() { _ = consumer.Close() })
+
+	require.NotNil(t, consumer.dlqValueRedactor)
 }
 
 func TestHandleWithRetry_RetryUntilCanceledDoesNotCommitOrDLQ(t *testing.T) {

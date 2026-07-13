@@ -379,16 +379,42 @@ func (p *Producer) Close() error {
 
 // Consumer wraps kafka.Reader
 type Consumer struct {
-	reader      *kafka.Reader
-	topic       string
-	groupID     string
-	retryCfg    retryConfig
-	dlqProducer dlqPublisher // nil when DLQ is disabled
-	dlqTopic    string
+	reader           *kafka.Reader
+	topic            string
+	groupID          string
+	retryCfg         retryConfig
+	dlqProducer      dlqPublisher // nil when DLQ is disabled
+	dlqTopic         string
+	dlqValueRedactor DLQValueRedactor
 }
 
-// NewConsumer creates a new Kafka consumer
+// DLQValueRedactor transforms source message bytes before they are persisted
+// in a dead-letter envelope. The returned bytes must be valid JSON. Use it to
+// enforce data minimization when an event schema may contain sensitive fields.
+// Returning an error retains the source offset rather than publishing raw data.
+// Implementations must honor context cancellation and must not perform
+// unbounded network I/O.
+type DLQValueRedactor func(ctx context.Context, value []byte) (json.RawMessage, error)
+
+// ConsumerOption configures behavior that is specific to one consumer.
+type ConsumerOption func(*Consumer)
+
+// WithDLQValueRedactor configures a fail-closed transform for original_value
+// in DLQ records. It has no effect while DLQ is disabled.
+func WithDLQValueRedactor(redactor DLQValueRedactor) ConsumerOption {
+	return func(consumer *Consumer) {
+		consumer.dlqValueRedactor = redactor
+	}
+}
+
+// NewConsumer creates a Kafka consumer with the stable default behavior.
 func NewConsumer(cfg Config, topic string) *Consumer {
+	return NewConsumerWithOptions(cfg, topic)
+}
+
+// NewConsumerWithOptions creates a Kafka consumer with explicit per-consumer
+// behavior such as privacy-safe DLQ redaction.
+func NewConsumerWithOptions(cfg Config, topic string, options ...ConsumerOption) *Consumer {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        cfg.Brokers,
 		Topic:          topic,
@@ -408,7 +434,7 @@ func NewConsumer(cfg Config, topic string) *Consumer {
 
 	rc := newRetryConfig(cfg)
 
-	var dlqProd *Producer
+	var dlqProd dlqPublisher
 	if cfg.DLQEnabled {
 		dlqTopic := topic + ".dlq"
 		dlqProd = NewProducer(cfg, dlqTopic)
@@ -417,7 +443,7 @@ func NewConsumer(cfg Config, topic string) *Consumer {
 		)
 	}
 
-	return &Consumer{
+	consumer := &Consumer{
 		reader:      reader,
 		topic:       topic,
 		groupID:     cfg.GroupID,
@@ -425,6 +451,12 @@ func NewConsumer(cfg Config, topic string) *Consumer {
 		dlqProducer: dlqProd,
 		dlqTopic:    topic + ".dlq",
 	}
+	for _, option := range options {
+		if option != nil {
+			option(consumer)
+		}
+	}
+	return consumer
 }
 
 // MessageHandler handles consumed messages
