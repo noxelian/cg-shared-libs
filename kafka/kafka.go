@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/segmentio/kafka-go"
 	"github.com/4ubak/cg-shared-libs/logger"
 	"github.com/4ubak/cg-shared-libs/metrics"
+	"github.com/segmentio/kafka-go"
 	"go.uber.org/zap"
 )
 
@@ -162,14 +162,7 @@ type Producer struct {
 
 // NewProducer creates a new Kafka producer
 func NewProducer(cfg Config, topic string) *Producer {
-	writer := &kafka.Writer{
-		Addr:         kafka.TCP(cfg.Brokers...),
-		Topic:        topic,
-		Balancer:     &kafka.LeastBytes{},
-		BatchSize:    cfg.BatchSize,
-		BatchTimeout: cfg.BatchTimeout,
-		Async:        false,
-	}
+	writer := newWriter(cfg, topic)
 
 	logger.Info("Kafka producer created",
 		zap.Strings("brokers", cfg.Brokers),
@@ -179,6 +172,18 @@ func NewProducer(cfg Config, topic string) *Producer {
 	return &Producer{
 		writer: writer,
 		topic:  topic,
+	}
+}
+
+func newWriter(cfg Config, topic string) *kafka.Writer {
+	return &kafka.Writer{
+		Addr:         kafka.TCP(cfg.Brokers...),
+		Topic:        topic,
+		Balancer:     &kafka.LeastBytes{},
+		BatchSize:    cfg.BatchSize,
+		BatchTimeout: cfg.BatchTimeout,
+		RequiredAcks: kafka.RequireAll,
+		Async:        false,
 	}
 }
 
@@ -281,6 +286,7 @@ func (p *Producer) writerFor(topic string) *kafka.Writer {
 		Balancer:     src.Balancer,
 		BatchSize:    src.BatchSize,
 		BatchTimeout: src.BatchTimeout,
+		RequiredAcks: src.RequiredAcks,
 		Async:        src.Async,
 	}
 	p.extraWriters[topic] = w

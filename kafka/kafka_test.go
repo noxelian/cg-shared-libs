@@ -4,10 +4,39 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
+	segmentio "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestNewWriterRequiresAllInSyncReplicas(t *testing.T) {
+	t.Parallel()
+
+	writer := newWriter(Config{
+		Brokers:      []string{"kafka-1:9092", "kafka-2:9092"},
+		BatchSize:    25,
+		BatchTimeout: 250 * time.Millisecond,
+	}, "request.events")
+
+	assert.Equal(t, segmentio.RequireAll, writer.RequiredAcks)
+	assert.False(t, writer.Async)
+	assert.Equal(t, "request.events", writer.Topic)
+	assert.Equal(t, 25, writer.BatchSize)
+	assert.Equal(t, 250*time.Millisecond, writer.BatchTimeout)
+}
+
+func TestExtraWriterPreservesAcknowledgementGuarantee(t *testing.T) {
+	t.Parallel()
+
+	producer := NewProducer(Config{Brokers: []string{"kafka:9092"}}, "request.events")
+	extra := producer.writerFor("notification.push")
+
+	assert.Equal(t, segmentio.RequireAll, extra.RequiredAcks)
+	assert.False(t, extra.Async)
+	assert.Equal(t, "notification.push", extra.Topic)
+}
 
 // --- UnmarshalError ---
 

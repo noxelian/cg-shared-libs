@@ -15,7 +15,7 @@ Entry point for a new Claude session in this library. Read before editing.
 | `grpc/adminrbac` | Admin RBAC interceptor (depends on `grpc`) |
 | `grpc/orgauth` | `EnforceOrgMatch` org-scope guards (depends on `grpc`). User authorization prefers the signed `orgs[]` membership claim; `org_id` remains optional selected-org context. |
 | `jwt` | JWT signer/validator; service-to-service token issuance. User tokens may carry signed `orgs[]` memberships separately from optional selected `org_id`. v1.41.0 added `NewLocalRS256Verifier(cfg, keys)` (jwt/localverifier.go): in-memory RS256 self-verification so the issuer does not depend on its own JWKS endpoint. |
-| `kafka` | Kafka producer + consumer wrappers (segmentio/kafka-go under the hood) |
+| `kafka` | Kafka producer + consumer wrappers (segmentio/kafka-go under the hood). Producers are synchronous and require acknowledgements from all in-sync replicas before `Publish` succeeds. |
 | `postgres` | pgx pool wrapper, migrations runner |
 | `redis` | go-redis/v9 wrapper |
 | `metrics` | Prometheus exporters |
@@ -57,6 +57,7 @@ Packages removed 2026-07-02 as unwired dead code (zero consumers across all `cg-
 - **`grpc.ClientConfig` has NO `env:` tags on Host/Port.** Consuming services must override manually in their `Load()` using `config.GetEnv()` / `config.GetEnvInt()`. (`postgres.Config` does have env tags and works automatically.)
 - YAML `${VAR:default}` interpolation does **not** work — Go's yaml.Unmarshal treats `${...}` as a literal string. Use `env:` tags instead.
 - Kafka `groupID` lacks a sensible default — set it explicitly or consumers silently misbehave.
+- `kafka.NewProducer` deliberately sets `RequiredAcks=RequireAll`; do not replace it with a raw zero-value `kafka.Writer`, whose default is fire-and-forget and is unsafe for outbox relays.
 - Don't add backwards-compat shims for old `env:` tag schemas; cut over consumers and remove the old field.
 
 ## Known architectural debt
