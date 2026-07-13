@@ -15,7 +15,7 @@ Entry point for a new Claude session in this library. Read before editing.
 | `grpc/adminrbac` | Admin RBAC interceptor (depends on `grpc`) |
 | `grpc/orgauth` | `EnforceOrgMatch` org-scope guards (depends on `grpc`). User authorization prefers the signed `orgs[]` membership claim; `org_id` remains optional selected-org context. |
 | `jwt` | JWT signer/validator; service-to-service token issuance. User tokens may carry signed `orgs[]` memberships separately from optional selected `org_id`. v1.41.0 added `NewLocalRS256Verifier(cfg, keys)` (jwt/localverifier.go): in-memory RS256 self-verification so the issuer does not depend on its own JWKS endpoint. |
-| `kafka` | Kafka producer + consumer wrappers (segmentio/kafka-go under the hood). Producers are synchronous and require acknowledgements from all in-sync replicas before `Publish` succeeds. |
+| `kafka` | Kafka producer + consumer wrappers (segmentio/kafka-go under the hood). Producers are synchronous and require acknowledgements from all in-sync replicas before `Publish` succeeds. With DLQ enabled, the source offset is committed only after an acknowledged DLQ write; DLQ outages retain the offset until recovery or shutdown. |
 | `postgres` | pgx pool wrapper, migrations runner |
 | `redis` | go-redis/v9 wrapper |
 | `metrics` | Prometheus exporters |

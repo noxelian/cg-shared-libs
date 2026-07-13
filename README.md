@@ -18,7 +18,7 @@ go get github.com/4ubak/cg-shared-libs@latest
 | `logger` | Структурированное логирование на основе zap (JSON формат) |
 | `postgres` | PostgreSQL клиент с пулом соединений, миграциями и поддержкой реплик |
 | `redis` | Redis клиент с поддержкой пулов и настройкой DB |
-| `kafka` | Kafka producer/consumer с batch/retry; синхронный producer ждёт подтверждения всех ISR (`RequireAll`) |
+| `kafka` | Kafka producer/consumer с batch/retry; синхронный producer ждёт подтверждения всех ISR (`RequireAll`), а включённый DLQ не разрешает commit исходного offset до подтверждённой записи |
 | `jwt` | Генерация и валидация JWT токенов (access + refresh) |
 | `grpc` | gRPC server/client helpers, TLS, JWT adapter, interceptors |
 | `crypto` | Шифрование, хэширование паролей, миграция хэшей |

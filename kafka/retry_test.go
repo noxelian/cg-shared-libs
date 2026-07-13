@@ -83,18 +83,35 @@ func TestCalcBackoff_NegativeAttempt(t *testing.T) {
 
 // makeConsumer builds a minimal Consumer with an extremely short backoff so
 // tests complete quickly without hitting Kafka.
-func makeConsumer(maxRetries int, dlqProd *Producer) *Consumer {
+func makeConsumer(maxRetries int, dlqProd dlqPublisher) *Consumer {
 	return &Consumer{
-		topic:   "test.topic",
-		groupID: "test-group",
+		topic:       "test.topic",
+		groupID:     "test-group",
+		dlqTopic:    "test.topic.dlq",
+		dlqProducer: dlqProd,
 		retryCfg: retryConfig{
 			maxRetries: maxRetries,
 			backoffMin: time.Millisecond,
 			backoffMax: 5 * time.Millisecond,
 		},
-		dlqProducer: dlqProd,
 	}
 }
+
+type fakeDLQPublisher struct {
+	failures int
+	calls    int
+	err      error
+}
+
+func (p *fakeDLQPublisher) PublishJSON(context.Context, string, any) error {
+	p.calls++
+	if p.calls <= p.failures {
+		return p.err
+	}
+	return nil
+}
+
+func (p *fakeDLQPublisher) Close() error { return nil }
 
 func makeMsg(value string) kafka.Message {
 	return kafka.Message{
@@ -185,6 +202,36 @@ func TestHandleWithRetry_ContextCancelledDuringBackoff(t *testing.T) {
 
 	assert.False(t, commit)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestHandleWithRetry_DLQFailureRetainsSourceOffset(t *testing.T) {
+	dlqErr := errors.New("DLQ broker unavailable")
+	dlq := &fakeDLQPublisher{failures: 1000, err: dlqErr}
+	c := makeConsumer(1, dlq)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	defer cancel()
+
+	commit, err := c.handleWithRetry(ctx, makeMsg(`{"id":"1"}`), func(context.Context, kafka.Message) error {
+		return errors.New("permanent handler failure")
+	})
+
+	assert.False(t, commit)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Positive(t, dlq.calls)
+}
+
+func TestHandleWithRetry_DLQRecoveryAllowsCommit(t *testing.T) {
+	dlq := &fakeDLQPublisher{failures: 2, err: errors.New("temporary DLQ failure")}
+	c := makeConsumer(1, dlq)
+	handlerErr := errors.New("permanent handler failure")
+
+	commit, err := c.handleWithRetry(context.Background(), makeMsg(`{"id":"1"}`), func(context.Context, kafka.Message) error {
+		return handlerErr
+	})
+
+	assert.True(t, commit)
+	assert.ErrorIs(t, err, handlerErr)
+	assert.Equal(t, 3, dlq.calls)
 }
 
 func TestHandleWithRetry_RetryUntilCanceledDoesNotCommitOrDLQ(t *testing.T) {

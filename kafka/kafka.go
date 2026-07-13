@@ -383,7 +383,8 @@ type Consumer struct {
 	topic       string
 	groupID     string
 	retryCfg    retryConfig
-	dlqProducer *Producer // nil when DLQ is disabled
+	dlqProducer dlqPublisher // nil when DLQ is disabled
+	dlqTopic    string
 }
 
 // NewConsumer creates a new Kafka consumer
@@ -422,6 +423,7 @@ func NewConsumer(cfg Config, topic string) *Consumer {
 		groupID:     cfg.GroupID,
 		retryCfg:    rc,
 		dlqProducer: dlqProd,
+		dlqTopic:    topic + ".dlq",
 	}
 }
 
@@ -487,11 +489,19 @@ func (c *Consumer) ConsumeEvent(ctx context.Context, handler func(ctx context.Co
 
 // Close closes the consumer
 func (c *Consumer) Close() error {
+	var firstErr error
 	if c.reader != nil {
 		logger.Info("Kafka consumer closed", zap.String("topic", c.topic))
-		return c.reader.Close()
+		if err := c.reader.Close(); err != nil {
+			firstErr = err
+		}
 	}
-	return nil
+	if c.dlqProducer != nil {
+		if err := c.dlqProducer.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // MultiConsumer consumes from multiple topics

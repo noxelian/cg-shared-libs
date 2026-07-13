@@ -71,17 +71,22 @@ type dlqPayload struct {
 	FailedAt      time.Time       `json:"failed_at"`
 }
 
-// sendToDLQ publishes msg to the DLQ topic. If the publish fails the error
-// is logged at error level and the caller should still commit the offset so
-// the consumer is not permanently stalled.
+type dlqPublisher interface {
+	PublishJSON(ctx context.Context, key string, data any) error
+	Close() error
+}
+
+// sendToDLQ publishes msg to the DLQ topic. The caller must not commit the
+// source offset unless this function returns nil.
 func sendToDLQ(
 	ctx context.Context,
-	prod *Producer,
+	prod dlqPublisher,
+	dlqTopic string,
 	topic string,
 	msg kafka.Message,
 	handlerErr error,
 	retryCount int,
-) {
+) error {
 	payload := dlqPayload{
 		OriginalTopic: topic,
 		OriginalKey:   string(msg.Key),
@@ -92,22 +97,70 @@ func sendToDLQ(
 	}
 
 	if err := prod.PublishJSON(ctx, string(msg.Key), payload); err != nil {
-		logger.Error("kafka DLQ publish failed — committing offset and continuing",
-			zap.Error(err),
-			zap.String("original_topic", topic),
-			zap.Int64("offset", msg.Offset),
-			zap.Int("retry_count", retryCount),
-		)
-		return
+		return fmt.Errorf("publish to DLQ: %w", err)
 	}
 
 	logger.Warn("kafka message moved to DLQ",
 		zap.String("original_topic", topic),
-		zap.String("dlq_topic", prod.topic),
+		zap.String("dlq_topic", dlqTopic),
 		zap.Int64("offset", msg.Offset),
 		zap.Int("retry_count", retryCount),
 		zap.String("error", handlerErr.Error()),
 	)
+	return nil
+}
+
+func (c *Consumer) sendToDLQUntilSuccess(
+	ctx context.Context,
+	msg kafka.Message,
+	handlerErr error,
+) error {
+	retainingOffset := false
+	attempt := 0
+	defer func() {
+		if retainingOffset {
+			metrics.ReleaseKafkaConsumerOffset(c.topic, c.groupID)
+		}
+	}()
+
+	for {
+		err := sendToDLQ(
+			ctx, c.dlqProducer, c.dlqTopic, c.topic, msg, handlerErr, c.retryCfg.maxRetries,
+		)
+		if err == nil {
+			metrics.RecordKafkaDLQ(c.topic, c.groupID)
+			return nil
+		}
+
+		if !retainingOffset {
+			metrics.RetainKafkaConsumerOffset(c.topic, c.groupID)
+			retainingOffset = true
+		}
+		delay := c.retryCfg.calcBackoff(attempt)
+		attempt++
+		metrics.RecordKafkaConsumerRetainedRetry(c.topic, c.groupID)
+		fields := []zap.Field{
+			zap.Error(err),
+			zap.String("topic", c.topic),
+			zap.String("dlq_topic", c.dlqTopic),
+			zap.String("consumer_group", c.groupID),
+			zap.Int("partition", msg.Partition),
+			zap.Int64("offset", msg.Offset),
+			zap.Int("attempt", attempt),
+			zap.Duration("backoff", delay),
+		}
+		if attempt == 1 || attempt%10 == 0 {
+			logger.Error("kafka DLQ unavailable; source offset retained", fields...)
+		} else {
+			logger.Debug("kafka DLQ retained-offset retry", fields...)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
 }
 
 // handleWithRetry calls handler for msg, retrying on transient errors with
@@ -212,7 +265,6 @@ func (c *Consumer) handleWithRetry(
 		}
 
 		// Max retries exhausted.
-		metrics.RecordKafkaDLQ(c.topic, c.groupID)
 		logger.Error("kafka message handler failed after max retries",
 			zap.Error(handlerErr),
 			zap.String("topic", c.topic),
@@ -221,7 +273,11 @@ func (c *Consumer) handleWithRetry(
 		)
 
 		if c.dlqProducer != nil {
-			sendToDLQ(ctx, c.dlqProducer, c.topic, msg, handlerErr, c.retryCfg.maxRetries)
+			if err := c.sendToDLQUntilSuccess(ctx, msg, handlerErr); err != nil {
+				return false, err
+			}
+		} else {
+			metrics.RecordKafkaDLQ(c.topic, c.groupID)
 		}
 
 		// Return the handler error so the caller has the original cause, but
