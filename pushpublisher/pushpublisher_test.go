@@ -172,5 +172,6 @@ func TestRouteConstants_AreStablePublicContract(t *testing.T) {
 	assert.Equal(t, Route("client.request.responses"), RouteClientRequestResponses)
 	assert.Equal(t, Route("client.parts_request.detail"), RouteClientPartsRequestDetail)
 	assert.Equal(t, Route("partner.request.detail"), RoutePartnerRequestDetail)
+	assert.Equal(t, Route("partner.order.detail"), RoutePartnerOrderDetail)
 	assert.Equal(t, Route("chat.detail"), RouteChatDetail)
 }

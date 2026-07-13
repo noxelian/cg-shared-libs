@@ -54,6 +54,7 @@ const (
 	RouteClientRequestResponses     Route = "client.request.responses"
 	RouteClientPartsRequestDetail   Route = "client.parts_request.detail"
 	RoutePartnerRequestDetail       Route = "partner.request.detail"
+	RoutePartnerOrderDetail         Route = "partner.order.detail"
 	RouteChatDetail                 Route = "chat.detail"
 	RoutePartnerOrganizationReviews Route = "partner.organization.reviews"
 )
