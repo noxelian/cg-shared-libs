@@ -1,6 +1,7 @@
 package kafka
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -36,6 +37,36 @@ func TestExtraWriterPreservesAcknowledgementGuarantee(t *testing.T) {
 	assert.Equal(t, segmentio.RequireAll, extra.RequiredAcks)
 	assert.False(t, extra.Async)
 	assert.Equal(t, "notification.push", extra.Topic)
+}
+
+func TestNewKeyedProducerRoutesEqualKeysToSamePartition(t *testing.T) {
+	t.Parallel()
+
+	producer := NewKeyedProducer(Config{Brokers: []string{"kafka:9092"}}, "request.events")
+	balancer, ok := producer.writer.Balancer.(*segmentio.Murmur2Balancer)
+	require.True(t, ok)
+	partitions := []int{0, 1, 2, 3, 4}
+	message := segmentio.Message{Key: []byte("request:request-42")}
+
+	want := balancer.Balance(message, partitions...)
+	for range 100 {
+		assert.Equal(t, want, balancer.Balance(message, partitions...))
+	}
+	assert.Contains(t, partitions, want)
+}
+
+func TestNewKeyedProducerRejectsEmptyKeys(t *testing.T) {
+	t.Parallel()
+
+	producer := NewKeyedProducer(Config{Brokers: []string{"kafka:9092"}}, "request.events")
+	err := producer.Publish(context.Background(), "", Event{ID: "event-1"})
+	assert.ErrorContains(t, err, "key is required")
+
+	err = producer.PublishJSON(context.Background(), "", map[string]string{"id": "event-1"})
+	assert.ErrorContains(t, err, "key is required")
+
+	err = producer.PublishJSONTo(context.Background(), "other.events", "request:1", map[string]string{"id": "event-1"})
+	assert.ErrorContains(t, err, "cross-topic publishing is not supported")
 }
 
 // --- UnmarshalError ---

@@ -24,6 +24,15 @@ Single source of truth: [`kafka/topics.go`](../../kafka/topics.go). Every produc
 | `TopicAdminEvents` | `admin.events` | bff-admin `realtime.CRMBridge`, AI/Workshop bridges | cg-communication/websocket | Realtime fanout to staff browsers — payload carries `data.recipient_user_ids` for per-user routing |
 | `TopicMemberEvents` | `member.events` | cg-users | bff-admin `revocationConsumer`, cg-communication/websocket | force_logout / role_revoked |
 
+## Ordered aggregate topics
+
+Producers that require per-aggregate ordering use `NewKeyedProducer` and a
+non-empty stable aggregate key. It uses the Java-compatible Murmur2 partitioner.
+The partition count of such a topic is an immutable runtime invariant: changing
+it remaps keys under every modulo-based partitioner and can let new events pass
+older records on the previous partition. Capacity changes require a controlled
+drain and versioned-topic cutover, not in-place partition expansion.
+
 ## How realtime events flow to the browser
 
 ```

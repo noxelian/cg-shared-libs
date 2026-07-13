@@ -150,8 +150,9 @@ type Metadata struct {
 
 // Producer wraps kafka.Writer
 type Producer struct {
-	writer *kafka.Writer
-	topic  string
+	writer     *kafka.Writer
+	topic      string
+	requireKey bool
 
 	// extraWriters holds per-topic writers spawned lazily by PublishJSONTo.
 	// Guarded by extraMu — both fields stay nil for callers that only ever
@@ -162,7 +163,20 @@ type Producer struct {
 
 // NewProducer creates a new Kafka producer
 func NewProducer(cfg Config, topic string) *Producer {
-	writer := newWriter(cfg, topic)
+	return newProducer(cfg, topic, &kafka.LeastBytes{}, false)
+}
+
+// NewKeyedProducer creates a producer that routes equal non-empty keys to the
+// same partition using Java-compatible Murmur2. Use it for ordered aggregate
+// streams such as request events. The topic partition count must remain fixed;
+// expanding it requires a controlled drain/version cutover because hash modulo
+// partition-count can remap existing keys.
+func NewKeyedProducer(cfg Config, topic string) *Producer {
+	return newProducer(cfg, topic, &kafka.Murmur2Balancer{Consistent: true}, true)
+}
+
+func newProducer(cfg Config, topic string, balancer kafka.Balancer, requireKey bool) *Producer {
+	writer := newWriterWithBalancer(cfg, topic, balancer)
 
 	logger.Info("Kafka producer created",
 		zap.Strings("brokers", cfg.Brokers),
@@ -170,16 +184,21 @@ func NewProducer(cfg Config, topic string) *Producer {
 	)
 
 	return &Producer{
-		writer: writer,
-		topic:  topic,
+		writer:     writer,
+		topic:      topic,
+		requireKey: requireKey,
 	}
 }
 
 func newWriter(cfg Config, topic string) *kafka.Writer {
+	return newWriterWithBalancer(cfg, topic, &kafka.LeastBytes{})
+}
+
+func newWriterWithBalancer(cfg Config, topic string, balancer kafka.Balancer) *kafka.Writer {
 	return &kafka.Writer{
 		Addr:         kafka.TCP(cfg.Brokers...),
 		Topic:        topic,
-		Balancer:     &kafka.LeastBytes{},
+		Balancer:     balancer,
 		BatchSize:    cfg.BatchSize,
 		BatchTimeout: cfg.BatchTimeout,
 		RequiredAcks: kafka.RequireAll,
@@ -189,6 +208,9 @@ func newWriter(cfg Config, topic string) *kafka.Writer {
 
 // Publish publishes an event to Kafka
 func (p *Producer) Publish(ctx context.Context, key string, event Event) error {
+	if p.requireKey && key == "" {
+		return fmt.Errorf("publish keyed event: key is required")
+	}
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("marshal event: %w", err)
@@ -217,6 +239,9 @@ func (p *Producer) Publish(ctx context.Context, key string, event Event) error {
 
 // PublishJSON publishes a JSON message to Kafka
 func (p *Producer) PublishJSON(ctx context.Context, key string, data any) error {
+	if p.requireKey && key == "" {
+		return fmt.Errorf("publish keyed JSON: key is required")
+	}
 	value, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("marshal data: %w", err)
@@ -247,6 +272,9 @@ func (p *Producer) PublishJSON(ctx context.Context, key string, data any) error 
 func (p *Producer) PublishJSONTo(ctx context.Context, topic, key string, data any) error {
 	if topic == "" || topic == p.topic {
 		return p.PublishJSON(ctx, key, data)
+	}
+	if p.requireKey {
+		return fmt.Errorf("publish keyed JSON: cross-topic publishing is not supported")
 	}
 
 	value, err := json.Marshal(data)
