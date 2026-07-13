@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -129,6 +130,7 @@ func (s *Signer) Refresh(refreshToken string) (*TokenPair, error) {
 		OrgType: claims.OrgType,
 		CityID:  claims.CityID,
 		OrgRole: claims.OrgRole,
+		OrgIDs:  slices.Clone(claims.OrgIDs),
 	}
 	return s.GenerateTokenPairWithContext(claims.UserID, claims.Phone, claims.DeviceID, appCtx)
 }

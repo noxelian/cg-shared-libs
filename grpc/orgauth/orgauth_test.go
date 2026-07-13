@@ -43,6 +43,12 @@ func TestEnforceOrgMatch(t *testing.T) {
 			wantCode:     codes.OK,
 		},
 		{
+			name:         "authoritative empty membership set denies",
+			auth:         &sharedGRPC.AuthInfo{UserID: 42, OrgIDs: []string{}},
+			requestedOrg: "org-b",
+			wantCode:     codes.PermissionDenied,
+		},
+		{
 			name:         "single-org match passes",
 			auth:         &sharedGRPC.AuthInfo{UserID: 42, OrgID: "org-a"},
 			requestedOrg: "org-a",

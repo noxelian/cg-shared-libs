@@ -1,6 +1,8 @@
 package grpc
 
 import (
+	"slices"
+
 	"github.com/4ubak/cg-shared-libs/jwt"
 )
 
@@ -46,5 +48,6 @@ func (a *JWTValidatorAdapter) ValidateAccessToken(token string) (*JWTClaims, err
 		OrgType:  claims.OrgType,
 		CityID:   claims.CityID,
 		OrgRole:  claims.OrgRole,
+		OrgIDs:   slices.Clone(claims.OrgIDs),
 	}, nil
 }

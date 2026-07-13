@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"runtime/debug"
+	"slices"
 	"time"
 
 	"github.com/4ubak/cg-shared-libs/logger"
@@ -409,6 +410,7 @@ type JWTClaims struct {
 	OrgType string
 	CityID  int64
 	OrgRole string
+	OrgIDs  []string
 }
 
 // AuthContextKey is the key for auth info in context
@@ -514,6 +516,7 @@ func AuthInterceptor(validator JWTValidator, cfg AuthInterceptorConfig) grpc.Una
 			OrgType:  claims.OrgType,
 			CityID:   claims.CityID,
 			OrgRole:  claims.OrgRole,
+			OrgIDs:   slices.Clone(claims.OrgIDs),
 		}
 		ctx = context.WithValue(ctx, authContextKey{}, authInfo)
 

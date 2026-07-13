@@ -13,8 +13,8 @@ Entry point for a new Claude session in this library. Read before editing.
 | `logger` | Zap-based structured logger; `logger.New(serviceName)` |
 | `grpc` | gRPC server + client builders, interceptors (auth/logging/recovery/metrics) |
 | `grpc/adminrbac` | Admin RBAC interceptor (depends on `grpc`) |
-| `grpc/orgauth` | `EnforceOrgMatch` org-scope guards (depends on `grpc`) — locked, don't touch |
-| `jwt` | JWT signer/validator; service-to-service token issuance — locked, don't touch. v1.41.0 added `NewLocalRS256Verifier(cfg, keys)` (jwt/localverifier.go): in-memory RS256 self-verification (dual-accepts HS256) so a signer can verify its own tokens without a network round-trip — used by cg-users auth to fix the boot-degrade bug. |
+| `grpc/orgauth` | `EnforceOrgMatch` org-scope guards (depends on `grpc`). User authorization prefers the signed `orgs[]` membership claim; `org_id` remains optional selected-org context. |
+| `jwt` | JWT signer/validator; service-to-service token issuance. User tokens may carry signed `orgs[]` memberships separately from optional selected `org_id`. v1.41.0 added `NewLocalRS256Verifier(cfg, keys)` (jwt/localverifier.go): in-memory RS256 self-verification so the issuer does not depend on its own JWKS endpoint. |
 | `kafka` | Kafka producer + consumer wrappers (segmentio/kafka-go under the hood) |
 | `postgres` | pgx pool wrapper, migrations runner |
 | `redis` | go-redis/v9 wrapper |
@@ -43,6 +43,7 @@ Packages removed 2026-07-02 as unwired dead code (zero consumers across all `cg-
 - Version bumps: tag (e.g. `v1.25.0`) → push to GitHub with `--tags` → consumers update via `go get github.com/4ubak/cg-shared-libs@vX.Y.Z`.
 - `GOPRIVATE=github.com/4ubak/*` is required in every consumer environment (and CI).
 - **Never put service-specific logic here.** If it belongs to one domain, it lives in that service.
+- `orgs[]` is signed authorization evidence populated only by the issuer. `orgs: []` is authoritative and grants no organization access; an absent/null claim is legacy-only compatibility. Metadata such as `x-org-id` is selection context and must never be promoted into `AuthInfo.OrgIDs` by a verifier.
 
 ## Critical files / packages
 

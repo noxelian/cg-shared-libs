@@ -3,6 +3,7 @@ package jwt
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -69,6 +70,9 @@ type AppContext struct {
 	OrgType string `json:"org_type,omitempty"`
 	CityID  int64  `json:"city_id,omitempty"`
 	OrgRole string `json:"org_role,omitempty"`
+	// OrgIDs is the user's complete active organization-membership set. It is
+	// independent from OrgID, which represents an optional selected org.
+	OrgIDs []string `json:"orgs"`
 }
 
 // Claims represents JWT claims
@@ -79,11 +83,12 @@ type Claims struct {
 	TokenType TokenType `json:"token_type,omitempty"`
 
 	// App context claims (optional; backward-compat: absent = "client")
-	App     string `json:"app,omitempty"`
-	OrgID   string `json:"org_id,omitempty"`
-	OrgType string `json:"org_type,omitempty"`
-	CityID  int64  `json:"city_id,omitempty"`
-	OrgRole string `json:"org_role,omitempty"`
+	App     string   `json:"app,omitempty"`
+	OrgID   string   `json:"org_id,omitempty"`
+	OrgType string   `json:"org_type,omitempty"`
+	CityID  int64    `json:"city_id,omitempty"`
+	OrgRole string   `json:"org_role,omitempty"`
+	OrgIDs  []string `json:"orgs"`
 
 	jwt.RegisteredClaims
 }
@@ -183,6 +188,7 @@ func buildClaims(userID int64, phone, deviceID string, appCtx AppContext, ttl ti
 		OrgType:   appCtx.OrgType,
 		CityID:    appCtx.CityID,
 		OrgRole:   appCtx.OrgRole,
+		OrgIDs:    slices.Clone(appCtx.OrgIDs),
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -254,6 +260,7 @@ func (m *Manager) Refresh(refreshToken string) (*TokenPair, error) {
 		OrgType: claims.OrgType,
 		CityID:  claims.CityID,
 		OrgRole: claims.OrgRole,
+		OrgIDs:  slices.Clone(claims.OrgIDs),
 	}
 	return m.GenerateTokenPairWithContext(claims.UserID, claims.Phone, claims.DeviceID, appCtx)
 }

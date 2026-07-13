@@ -16,9 +16,9 @@
 //   - Service-to-service callers (UserID == 0) are trusted and bypass the
 //     check — they legitimately act on behalf of arbitrary orgs (admin panel,
 //     internal tools, cross-service calls).
-//   - Legacy tokens without any org context (single OrgID empty AND OrgIDs
-//     empty) bypass the check for backward compatibility during the org-model
-//     migration.
+//   - Legacy tokens without any org context (single OrgID empty AND OrgIDs nil)
+//     bypass the check for backward compatibility during the org-model migration.
+//     A present, empty orgs[] claim is authoritative and grants no org access.
 //   - For every other user caller, the requested org must match the caller's
 //     org context: membership in OrgIDs when present (Option B), else equality
 //     with the single OrgID claim.
@@ -74,8 +74,9 @@ func EnforceOrgMatch(auth *sharedGRPC.AuthInfo, requestedOrgID string) error {
 		return nil
 	}
 
-	// Option B: prefer the full membership set when the token carries one.
-	if len(auth.OrgIDs) > 0 {
+	// Prefer the signed membership set whenever the token carries the claim.
+	// A non-nil empty slice means the issuer authoritatively resolved zero orgs.
+	if auth.OrgIDs != nil {
 		if slices.Contains(auth.OrgIDs, requestedOrgID) {
 			return nil
 		}
