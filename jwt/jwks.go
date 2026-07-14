@@ -83,10 +83,10 @@ type jwksCache struct {
 	stopOnce  sync.Once
 }
 
-// newJWKSCache builds a cache backed by an HTTP GET against url.
-func newJWKSCache(url string, refresh, timeout time.Duration, client *http.Client) *jwksCache {
+// newJWKSCache builds a cache backed by an HTTP GET against jwksURL.
+func newJWKSCache(jwksURL string, refresh, timeout time.Duration, client *http.Client) *jwksCache {
 	fetch := func(ctx context.Context) ([]byte, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURL, http.NoBody)
 		if err != nil {
 			return nil, err
 		}

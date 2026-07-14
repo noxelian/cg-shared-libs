@@ -35,6 +35,7 @@ func TestNewManager_EmptySecretKey(t *testing.T) {
 }
 
 func TestNewManager_ShortSecretKey(t *testing.T) {
+	//nolint:gosec // SecretKey is deliberately one byte too short to test rejection.
 	cfg := Config{
 		SecretKey: "short-key-only-31-characters!!", // 31 bytes
 	}
@@ -363,7 +364,7 @@ func TestParse_TokenWithUnexpectedSigningMethod(t *testing.T) {
 
 	// This is a token signed with RS256 instead of HS256 (crafted for testing)
 	// In real scenarios, this would be detected by the signing method check
-	invalidToken := "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxMjN9.invalid"
+	invalidToken := "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxMjN9.invalid" //nolint:gosec // gitleaks:allow -- intentionally invalid test JWT
 
 	_, err := manager.Parse(invalidToken)
 

@@ -6,8 +6,6 @@ import (
 	"strings"
 
 	"github.com/4ubak/cg-shared-libs/jwt"
-	"github.com/4ubak/cg-shared-libs/logger"
-	"go.uber.org/zap"
 )
 
 // TokenValidator interface for JWT validation
@@ -34,7 +32,6 @@ func (a *Authenticator) ExtractUserID(r *http.Request) (int64, error) {
 
 	claims, err := a.jwtManager.ValidateAccessToken(tokenStr)
 	if err != nil {
-		logger.Debug("failed to validate access token", zap.Error(err))
 		return 0, fmt.Errorf("invalid token: %w", err)
 	}
 
@@ -46,36 +43,26 @@ func (a *Authenticator) ExtractUserID(r *http.Request) (int64, error) {
 }
 
 // ExtractToken extracts JWT token from request.
-// Priority order (most secure first):
-//  1. Sec-WebSocket-Protocol header with "access_token" subprotocol
+// Priority order:
+//  1. Sec-WebSocket-Protocol header with the "access_token", "<JWT>" pair
 //  2. Authorization: Bearer header
-//  3. Query parameter "token" (deprecated - tokens may appear in access logs)
+//
+// Query parameters are intentionally ignored because URLs are routinely
+// persisted in browser history, ingress logs, traces, and monitoring systems.
 func ExtractToken(r *http.Request) string {
 	// 1. Sec-WebSocket-Protocol: access_token, <JWT>
-	// This is the recommended way for WebSocket auth (no URL exposure)
 	protocols := r.Header.Get("Sec-WebSocket-Protocol")
 	if protocols != "" {
-		for _, part := range strings.Split(protocols, ",") {
-			p := strings.TrimSpace(part)
-			if p != "access_token" && p != "" {
-				return p
-			}
+		parts := strings.Split(protocols, ",")
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) == "access_token" {
+			return strings.TrimSpace(parts[1])
 		}
 	}
 
 	// 2. Authorization header
-	authHeader := r.Header.Get("Authorization")
-	if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
-		return strings.TrimPrefix(authHeader, "Bearer ")
-	}
-
-	// 3. Query parameter (deprecated - tokens appear in server access logs)
-	tokenStr := r.URL.Query().Get("token")
-	if tokenStr != "" {
-		logger.Warn("websocket auth via query param is deprecated, use Sec-WebSocket-Protocol header",
-			zap.String("remote_addr", r.RemoteAddr),
-		)
-		return tokenStr
+	parts := strings.Fields(r.Header.Get("Authorization"))
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+		return parts[1]
 	}
 
 	return ""

@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testSecret = "test-secret-key-exactly-32-chars"
+const testSecret = "test-secret-key-exactly-32-chars" //nolint:gosec // gitleaks:allow -- deterministic test fixture
 
 func newTestSigner(t *testing.T, kid string) *Signer {
 	t.Helper()

@@ -58,6 +58,10 @@ Packages removed 2026-07-02 as unwired dead code (zero consumers across all `cg-
 - YAML `${VAR:default}` interpolation does **not** work — Go's yaml.Unmarshal treats `${...}` as a literal string. Use `env:` tags instead.
 - Kafka `groupID` lacks a sensible default — set it explicitly or consumers silently misbehave.
 - `kafka.NewProducer` deliberately sets `RequiredAcks=RequireAll`; do not replace it with a raw zero-value `kafka.Writer`, whose default is fire-and-forget and is unsafe for outbox relays.
+- `ws.ExtractToken` accepts only `Authorization: Bearer <JWT>` or the exact
+  `Sec-WebSocket-Protocol: access_token, <JWT>` pair. Query-string tokens are intentionally
+  rejected because URLs leak into access logs and browser history. Consumers pinned to an older
+  shared-libs tag must keep an equivalent local extractor until they bump the library release.
 - Don't add backwards-compat shims for old `env:` tag schemas; cut over consumers and remove the old field.
 
 ## Known architectural debt

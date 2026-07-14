@@ -166,7 +166,7 @@ func (s *Signer) KeyID() string { return s.kid }
 // cannot mutate the Signer's internal key material through the returned pointer.
 func (s *Signer) PublicKey() *rsa.PublicKey {
 	pub := s.priv.PublicKey
-	pub.N = new(big.Int).Set(s.priv.PublicKey.N)
+	pub.N = new(big.Int).Set(s.priv.N)
 	return &pub
 }
 
