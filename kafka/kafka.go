@@ -133,10 +133,14 @@ func IsRetryUntilCanceled(err error) bool {
 
 // Config holds Kafka configuration
 type Config struct {
-	Brokers       []string      `yaml:"brokers" env:"KAFKA_BROKERS" env-default:"localhost:9092"`
-	GroupID       string        `yaml:"group_id" env:"KAFKA_GROUP_ID"`
-	TopicSuffix   string        `yaml:"topic_suffix" env:"KAFKA_TOPIC_SUFFIX"`
-	GroupIDSuffix string        `yaml:"group_id_suffix" env:"KAFKA_GROUP_ID_SUFFIX"`
+	Brokers       []string `yaml:"brokers" env:"KAFKA_BROKERS" env-default:"localhost:9092"`
+	GroupID       string   `yaml:"group_id" env:"KAFKA_GROUP_ID"`
+	TopicSuffix   string   `yaml:"topic_suffix" env:"KAFKA_TOPIC_SUFFIX"`
+	GroupIDSuffix string   `yaml:"group_id_suffix" env:"KAFKA_GROUP_ID_SUFFIX"`
+	// StartOffset controls where a brand-new consumer group begins. Existing
+	// groups always resume their committed offset. Supported values are
+	// "earliest" (default) and "latest"; "first"/"last" are accepted aliases.
+	StartOffset   string        `yaml:"start_offset" env:"KAFKA_START_OFFSET" env-default:"earliest"`
 	MinBytes      int           `yaml:"min_bytes" env:"KAFKA_MIN_BYTES" env-default:"10000"`    // 10KB
 	MaxBytes      int           `yaml:"max_bytes" env:"KAFKA_MAX_BYTES" env-default:"10000000"` // 10MB
 	MaxWait       time.Duration `yaml:"max_wait" env:"KAFKA_MAX_WAIT" env-default:"500ms"`
@@ -493,10 +497,17 @@ func NewConsumer(cfg Config, topic string) *Consumer {
 func NewConsumerWithOptions(cfg Config, topic string, options ...ConsumerOption) *Consumer {
 	topic = cfg.Topic(topic)
 	groupID := cfg.ConsumerGroup(cfg.GroupID)
+	startOffset, validStartOffset := consumerStartOffset(cfg.StartOffset)
+	if !validStartOffset {
+		logger.Warn("invalid Kafka start offset; using earliest",
+			zap.String("configured_start_offset", cfg.StartOffset),
+		)
+	}
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        cfg.Brokers,
 		Topic:          topic,
 		GroupID:        groupID,
+		StartOffset:    startOffset,
 		MinBytes:       cfg.MinBytes,
 		MaxBytes:       cfg.MaxBytes,
 		MaxWait:        cfg.MaxWait,
@@ -536,6 +547,17 @@ func NewConsumerWithOptions(cfg Config, topic string, options ...ConsumerOption)
 	}
 	consumer.finalizeOptions()
 	return consumer
+}
+
+func consumerStartOffset(value string) (int64, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "earliest", "first":
+		return kafka.FirstOffset, true
+	case "latest", "last":
+		return kafka.LastOffset, true
+	default:
+		return kafka.FirstOffset, false
+	}
 }
 
 func (c *Consumer) finalizeOptions() {
