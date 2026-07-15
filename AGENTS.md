@@ -20,7 +20,7 @@ Shared infrastructure library for CTOgram services. Module:
 
 ## Release Contract
 
-1. Run `go test ./... -cover`, `go build ./...`, and `golangci-lint run`.
+1. Run every command in the `Commands` section below.
 2. Commit and push `main` to both `origin` (GitHub) and `gitlab`.
 3. Create the next semantic version tag and push it to both remotes.
 4. Bump consumers using the GitHub module path. Never add a local `replace`.
@@ -28,6 +28,39 @@ Shared infrastructure library for CTOgram services. Module:
 
 Breaking changes require a coordinated consumer release. Security tightening
 that rejects credentials in URLs must not be bypassed by compatibility shims.
+
+## Platform Role Authorization
+
+- `platform_roles` is signed authorization evidence carried by access JWTs
+  only. Refresh JWTs intentionally omit roles; refresh flows must resolve the
+  current roles before issuing a new privileged access token.
+- `grpc/adminrbac` authorizes only `AuthInfo.PlatformRoles`, populated by the
+  JWT auth interceptor. Raw incoming `x-platform-role` metadata is untrusted
+  and is never an authorization source.
+- A trusted live-role resolver may enrich an already authenticated context
+  with `grpc.ContextWithPlatformRoles`. Do not call it from request metadata or
+  other client-controlled values.
+
+## JWT Verification Modes
+
+- RS256 verification requires `JWKSURL`.
+- Local legacy HS256 verification is available only when `AcceptHS256: true`
+  is explicit and a secret is configured.
+- `jwt.NewVerifier` fails closed when `AcceptHS256` is false and `JWKSURL` is
+  empty. Consumers completing the RS256 migration must configure JWKS before
+  disabling HS256.
+
+## Unary Retry Contract
+
+- `MaxRetries` alone does not enable retries. List explicitly idempotent unary
+  RPCs in `RetryableMethods` using exact full method names or a `/Service/*`
+  suffix pattern.
+- `RetryAllMethods` is an explicit opt-in for clients whose every unary RPC is
+  safe to replay. Do not enable it for clients with arbitrary writes.
+- The shared interceptor retries only `Unavailable`; it does not globally
+  retry `Internal`, `Aborted`, or `ResourceExhausted`.
+- `Timeout` bounds the total unary call, including all attempts and waits.
+  Backoff uses bounded equal jitter capped by `RetryMaxWaitTime`.
 
 ## WebSocket Authentication
 

@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/4ubak/cg-shared-libs/logger"
+	"github.com/4ubak/cg-shared-libs/metrics"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/4ubak/cg-shared-libs/logger"
-	"github.com/4ubak/cg-shared-libs/metrics"
 	"go.uber.org/zap"
 )
 
@@ -60,8 +60,8 @@ func NewDatabase(ctx context.Context, cfg Config, replicaCfg *ReplicaPoolConfig)
 // Implements Database interface for backward compatibility
 type Pool struct {
 	*pgxpool.Pool
-	dbName    string
-	cancelFn  context.CancelFunc
+	dbName   string
+	cancelFn context.CancelFunc
 }
 
 // New creates a new PostgreSQL connection pool
@@ -134,7 +134,7 @@ func (p *Pool) collectPoolMetrics(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			stat := p.Pool.Stat()
+			stat := p.Stat()
 			metrics.SetDBConnections(p.dbName,
 				int(stat.AcquiredConns()),
 				int(stat.IdleConns()),

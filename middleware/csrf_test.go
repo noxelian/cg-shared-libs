@@ -12,7 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func setupCSRFTestRedis(t *testing.T) (*redis.Client, *RedisCSRFStore, func()) {
+func setupCSRFTestRedis(t *testing.T) (store *RedisCSRFStore, cleanup func()) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("failed to start miniredis: %v", err)
@@ -22,18 +22,18 @@ func setupCSRFTestRedis(t *testing.T) (*redis.Client, *RedisCSRFStore, func()) {
 		Addr: mr.Addr(),
 	})
 
-	store := NewRedisCSRFStore(client)
+	store = NewRedisCSRFStore(client)
 
-	cleanup := func() {
+	cleanup = func() {
 		client.Close()
 		mr.Close()
 	}
 
-	return client, store, cleanup
+	return store, cleanup
 }
 
 func TestCSRFMiddleware_SkipMobileEndpoints(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
@@ -43,7 +43,7 @@ func TestCSRFMiddleware_SkipMobileEndpoints(t *testing.T) {
 		c.String(http.StatusOK, "ok")
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/mobile/auth/login", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/mobile/auth/login", http.NoBody)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
@@ -54,7 +54,7 @@ func TestCSRFMiddleware_SkipMobileEndpoints(t *testing.T) {
 }
 
 func TestCSRFMiddleware_SkipBearerToken(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
@@ -64,7 +64,7 @@ func TestCSRFMiddleware_SkipBearerToken(t *testing.T) {
 		c.String(http.StatusOK, "ok")
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/web/action", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/web/action", http.NoBody)
 	req.Header.Set("Authorization", "Bearer valid_token_here")
 	w := httptest.NewRecorder()
 
@@ -76,7 +76,7 @@ func TestCSRFMiddleware_SkipBearerToken(t *testing.T) {
 }
 
 func TestCSRFMiddleware_SkipWebSocket(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
@@ -86,7 +86,7 @@ func TestCSRFMiddleware_SkipWebSocket(t *testing.T) {
 		c.String(http.StatusOK, "ok")
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ws", http.NoBody)
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Connection", "upgrade")
 	w := httptest.NewRecorder()
@@ -99,7 +99,7 @@ func TestCSRFMiddleware_SkipWebSocket(t *testing.T) {
 }
 
 func TestCSRFMiddleware_GenerateTokenOnGET(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
@@ -113,7 +113,7 @@ func TestCSRFMiddleware_GenerateTokenOnGET(t *testing.T) {
 		c.String(http.StatusOK, "ok")
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/web/profile", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/web/profile", http.NoBody)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
@@ -150,15 +150,17 @@ func TestCSRFMiddleware_GenerateTokenOnGET(t *testing.T) {
 }
 
 func TestCSRFMiddleware_ValidateTokenOnPOST(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
 	sessionID := "123"
 
 	// Pre-store a valid token
-	validToken := "valid_csrf_token_abc123"
-	store.Set(context.Background(), sessionID, validToken, time.Hour)
+	validToken := "valid_csrf_token_abc123" //nolint:gosec // Test fixture, not a credential.
+	if err := store.Set(context.Background(), sessionID, validToken, time.Hour); err != nil {
+		t.Fatal(err)
+	}
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -171,7 +173,7 @@ func TestCSRFMiddleware_ValidateTokenOnPOST(t *testing.T) {
 	})
 
 	// Test with valid token
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/web/action", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/web/action", http.NoBody)
 	req.Header.Set(CSRFTokenHeader, validToken)
 	w := httptest.NewRecorder()
 
@@ -183,15 +185,17 @@ func TestCSRFMiddleware_ValidateTokenOnPOST(t *testing.T) {
 }
 
 func TestCSRFMiddleware_RejectInvalidToken(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
 	sessionID := "123"
 
 	// Pre-store a valid token
-	validToken := "valid_csrf_token_abc123"
-	store.Set(context.Background(), sessionID, validToken, time.Hour)
+	validToken := "valid_csrf_token_abc123" //nolint:gosec // Test fixture, not a credential.
+	if err := store.Set(context.Background(), sessionID, validToken, time.Hour); err != nil {
+		t.Fatal(err)
+	}
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -204,7 +208,7 @@ func TestCSRFMiddleware_RejectInvalidToken(t *testing.T) {
 	})
 
 	// Test with invalid token
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/web/action", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/web/action", http.NoBody)
 	req.Header.Set(CSRFTokenHeader, "invalid_token")
 	w := httptest.NewRecorder()
 
@@ -216,15 +220,17 @@ func TestCSRFMiddleware_RejectInvalidToken(t *testing.T) {
 }
 
 func TestCSRFMiddleware_RejectMissingToken(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
 	sessionID := "123"
 
 	// Pre-store a valid token
-	validToken := "valid_csrf_token_abc123"
-	store.Set(context.Background(), sessionID, validToken, time.Hour)
+	validToken := "valid_csrf_token_abc123" //nolint:gosec // Test fixture, not a credential.
+	if err := store.Set(context.Background(), sessionID, validToken, time.Hour); err != nil {
+		t.Fatal(err)
+	}
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -237,7 +243,7 @@ func TestCSRFMiddleware_RejectMissingToken(t *testing.T) {
 	})
 
 	// Test without token
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/web/action", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/web/action", http.NoBody)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
@@ -248,15 +254,17 @@ func TestCSRFMiddleware_RejectMissingToken(t *testing.T) {
 }
 
 func TestCSRFMiddleware_DoubleSubmitPattern(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
 	sessionID := "123"
 
 	// Pre-store a valid token
-	validToken := "valid_csrf_token_double_submit"
-	store.Set(context.Background(), sessionID, validToken, time.Hour)
+	validToken := "valid_csrf_token_double_submit" //nolint:gosec // Test fixture, not a credential.
+	if err := store.Set(context.Background(), sessionID, validToken, time.Hour); err != nil {
+		t.Fatal(err)
+	}
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -269,7 +277,7 @@ func TestCSRFMiddleware_DoubleSubmitPattern(t *testing.T) {
 	})
 
 	// Test with both header and cookie (double-submit pattern)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/web/action", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/web/action", http.NoBody)
 	req.Header.Set(CSRFTokenHeader, validToken)
 	req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: validToken})
 	w := httptest.NewRecorder()
@@ -282,15 +290,17 @@ func TestCSRFMiddleware_DoubleSubmitPattern(t *testing.T) {
 }
 
 func TestCSRFMiddleware_DoubleSubmitMismatch(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
 	sessionID := "123"
 
 	// Pre-store a valid token
-	validToken := "valid_csrf_token_stored"
-	store.Set(context.Background(), sessionID, validToken, time.Hour)
+	validToken := "valid_csrf_token_stored" //nolint:gosec // Test fixture, not a credential.
+	if err := store.Set(context.Background(), sessionID, validToken, time.Hour); err != nil {
+		t.Fatal(err)
+	}
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -303,7 +313,7 @@ func TestCSRFMiddleware_DoubleSubmitMismatch(t *testing.T) {
 	})
 
 	// Test with mismatched header and cookie
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/web/action", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/web/action", http.NoBody)
 	req.Header.Set(CSRFTokenHeader, "header_token")
 	req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: "cookie_token"})
 	w := httptest.NewRecorder()
@@ -316,7 +326,7 @@ func TestCSRFMiddleware_DoubleSubmitMismatch(t *testing.T) {
 }
 
 func TestCSRFMiddleware_SkipExcludedPaths(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
@@ -332,7 +342,7 @@ func TestCSRFMiddleware_SkipExcludedPaths(t *testing.T) {
 		c.String(http.StatusOK, "ok")
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/public/data", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/public/data", http.NoBody)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
@@ -343,7 +353,7 @@ func TestCSRFMiddleware_SkipExcludedPaths(t *testing.T) {
 }
 
 func TestCSRFMiddleware_Disabled(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
@@ -359,7 +369,7 @@ func TestCSRFMiddleware_Disabled(t *testing.T) {
 		c.String(http.StatusOK, "ok")
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/web/action", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/web/action", http.NoBody)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
@@ -370,15 +380,17 @@ func TestCSRFMiddleware_Disabled(t *testing.T) {
 }
 
 func TestCSRFMiddleware_PUTMethod(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
 	sessionID := "123"
 
 	// Pre-store a valid token
-	validToken := "valid_csrf_token_put"
-	store.Set(context.Background(), sessionID, validToken, time.Hour)
+	validToken := "valid_csrf_token_put" //nolint:gosec // Test fixture, not a credential.
+	if err := store.Set(context.Background(), sessionID, validToken, time.Hour); err != nil {
+		t.Fatal(err)
+	}
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -391,7 +403,7 @@ func TestCSRFMiddleware_PUTMethod(t *testing.T) {
 	})
 
 	// Test PUT with valid token
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/web/resource", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/api/v1/web/resource", http.NoBody)
 	req.Header.Set(CSRFTokenHeader, validToken)
 	w := httptest.NewRecorder()
 
@@ -403,15 +415,17 @@ func TestCSRFMiddleware_PUTMethod(t *testing.T) {
 }
 
 func TestCSRFMiddleware_DELETEMethod(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
 	sessionID := "123"
 
 	// Pre-store a valid token
-	validToken := "valid_csrf_token_delete"
-	store.Set(context.Background(), sessionID, validToken, time.Hour)
+	validToken := "valid_csrf_token_delete" //nolint:gosec // Test fixture, not a credential.
+	if err := store.Set(context.Background(), sessionID, validToken, time.Hour); err != nil {
+		t.Fatal(err)
+	}
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -424,7 +438,7 @@ func TestCSRFMiddleware_DELETEMethod(t *testing.T) {
 	})
 
 	// Test DELETE with valid token
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/web/resource/123", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/api/v1/web/resource/123", http.NoBody)
 	req.Header.Set(CSRFTokenHeader, validToken)
 	w := httptest.NewRecorder()
 
@@ -436,14 +450,16 @@ func TestCSRFMiddleware_DELETEMethod(t *testing.T) {
 }
 
 func TestCSRFMiddleware_PATCHMethod(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
 	sessionID := "123"
 
-	validToken := "valid_csrf_token_patch"
-	store.Set(context.Background(), sessionID, validToken, time.Hour)
+	validToken := "valid_csrf_token_patch" //nolint:gosec // Static CSRF fixture, not a credential.
+	if err := store.Set(context.Background(), sessionID, validToken, time.Hour); err != nil {
+		t.Fatal(err)
+	}
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -456,7 +472,7 @@ func TestCSRFMiddleware_PATCHMethod(t *testing.T) {
 	})
 
 	// Test PATCH without valid token should fail
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/web/resource/123", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/api/v1/web/resource/123", http.NoBody)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
@@ -472,7 +488,7 @@ func TestGenerateCSRFToken(t *testing.T) {
 		t.Fatalf("failed to generate token: %v", err)
 	}
 
-	if len(token1) == 0 {
+	if token1 == "" {
 		t.Error("generated token should not be empty")
 	}
 
@@ -487,12 +503,12 @@ func TestGenerateCSRFToken(t *testing.T) {
 }
 
 func TestRedisCSRFStore(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	testKey := "test_session"
-	testToken := "test_csrf_token_123"
+	testToken := "test_csrf_token_123" //nolint:gosec // Static CSRF fixture, not a credential.
 
 	// Test Set
 	err := store.Set(ctx, testKey, testToken, time.Hour)
@@ -604,14 +620,16 @@ func TestFormatInt64(t *testing.T) {
 }
 
 func TestHTTPCSRFMiddleware(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	})
 
 	getUserID := func(r *http.Request) (string, bool) {
@@ -624,7 +642,7 @@ func TestHTTPCSRFMiddleware(t *testing.T) {
 	wrappedHandler := HTTPCSRFMiddleware(store, cfg, getUserID)(handler)
 
 	// Test GET request generates token
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/web/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/web/test", http.NoBody)
 	req.Header.Set("X-User-ID", "123")
 	w := httptest.NewRecorder()
 	wrappedHandler.ServeHTTP(w, req)
@@ -639,8 +657,10 @@ func TestHTTPCSRFMiddleware(t *testing.T) {
 	}
 
 	// Test POST with valid token
-	store.Set(context.Background(), "456", "stored_token", time.Hour)
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/web/action", nil)
+	if err := store.Set(context.Background(), "456", "stored_token", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/web/action", http.NoBody)
 	req.Header.Set("X-User-ID", "456")
 	req.Header.Set(CSRFTokenHeader, "stored_token")
 	w = httptest.NewRecorder()
@@ -651,7 +671,7 @@ func TestHTTPCSRFMiddleware(t *testing.T) {
 	}
 
 	// Test POST without token
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/web/action", nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/web/action", http.NoBody)
 	req.Header.Set("X-User-ID", "789")
 	w = httptest.NewRecorder()
 	wrappedHandler.ServeHTTP(w, req)
@@ -662,7 +682,7 @@ func TestHTTPCSRFMiddleware(t *testing.T) {
 }
 
 func TestCSRFMiddleware_NoSession(t *testing.T) {
-	_, store, cleanup := setupCSRFTestRedis(t)
+	store, cleanup := setupCSRFTestRedis(t)
 	defer cleanup()
 
 	cfg := DefaultCSRFConfig()
@@ -678,7 +698,7 @@ func TestCSRFMiddleware_NoSession(t *testing.T) {
 	})
 
 	// POST without session should be allowed (no session to protect)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/web/public", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/web/public", http.NoBody)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -687,7 +707,7 @@ func TestCSRFMiddleware_NoSession(t *testing.T) {
 	}
 
 	// GET without session should still generate token
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/web/public", nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/web/public", http.NoBody)
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -724,7 +744,9 @@ func BenchmarkCSRFMiddleware(b *testing.B) {
 	cfg := DefaultCSRFConfig()
 
 	// Pre-store a token
-	store.Set(context.Background(), "123", "benchmark_token", time.Hour)
+	if err := store.Set(context.Background(), "123", "benchmark_token", time.Hour); err != nil {
+		b.Fatal(err)
+	}
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -738,7 +760,7 @@ func BenchmarkCSRFMiddleware(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		req := httptest.NewRequest(http.MethodPost, "/test", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/test", http.NoBody)
 		req.Header.Set(CSRFTokenHeader, "benchmark_token")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)

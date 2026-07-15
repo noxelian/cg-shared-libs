@@ -1,10 +1,10 @@
 // Package adminrbac provides a gRPC server-side unary interceptor that
 // validates platform admin/support role access for admin-only RPCs.
 //
-// The interceptor reads the x-platform-role metadata header that the BFF
-// stamps onto outgoing gRPC calls after resolving the caller's platform
-// roles from cg-users. Any method registered as admin-only requires the
-// caller to carry at least one of the configured allowed roles.
+// The interceptor reads platform roles only from AuthInfo populated after JWT
+// verification. Raw incoming metadata is untrusted and is never authorization
+// evidence. Any method registered as admin-only requires the caller to carry at
+// least one of the configured allowed roles.
 //
 // Usage:
 //
@@ -24,13 +24,11 @@ import (
 	"context"
 	"strings"
 
+	sharedGRPC "github.com/4ubak/cg-shared-libs/grpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
-
-const platformRoleHeader = "x-platform-role"
 
 // Config holds interceptor configuration.
 type Config struct {
@@ -78,12 +76,12 @@ func (i *Interceptor) Unary() grpc.UnaryServerInterceptor {
 			return handler(ctx, req)
 		}
 
-		roles := extractPlatformRoles(ctx)
-		if len(roles) == 0 {
+		auth, ok := sharedGRPC.GetAuthInfo(ctx)
+		if !ok || auth == nil {
 			return nil, status.Error(codes.Unauthenticated, "missing authorization token")
 		}
 
-		for _, r := range roles {
+		for _, r := range auth.PlatformRoles {
 			if _, ok := i.allowedRoles[r]; ok {
 				return handler(ctx, req)
 			}
@@ -110,10 +108,9 @@ func (i *Interceptor) isAdminMethod(fullMethod string) bool {
 	return false
 }
 
-// IsPlatformAdmin returns true when the incoming gRPC context carries an
-// x-platform-role metadata value of "admin" or "support". Use this helper
-// inside gRPC handlers to allow platform admins to impersonate any user
-// without being bound by per-user ownership checks.
+// IsPlatformAdmin returns true when verified AuthInfo carries an "admin" or
+// "support" platform role. Use this helper inside gRPC handlers to allow
+// platform admins to act across per-user ownership boundaries.
 //
 // Example usage in a handler:
 //
@@ -121,20 +118,14 @@ func (i *Interceptor) isAdminMethod(fullMethod string) bool {
 //	    return nil, status.Error(codes.PermissionDenied, "cannot access another user's cart")
 //	}
 func IsPlatformAdmin(ctx context.Context) bool {
-	for _, r := range extractPlatformRoles(ctx) {
+	auth, ok := sharedGRPC.GetAuthInfo(ctx)
+	if !ok || auth == nil {
+		return false
+	}
+	for _, r := range auth.PlatformRoles {
 		if r == "admin" || r == "support" {
 			return true
 		}
 	}
 	return false
-}
-
-// extractPlatformRoles reads all values of the x-platform-role metadata key
-// from the incoming gRPC context.
-func extractPlatformRoles(ctx context.Context) []string {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return nil
-	}
-	return md.Get(platformRoleHeader)
 }

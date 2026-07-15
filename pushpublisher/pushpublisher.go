@@ -105,9 +105,9 @@ type Event struct {
 	UserID int64 `json:"user_id"`
 	// EventType is a dot-separated identifier like "order.status_changed".
 	EventType string `json:"event_type"`
-	// Title is the push notification title (localised).
+	// Title is the push notification title (localized).
 	Title string `json:"title"`
-	// Body is the push notification body (localised).
+	// Body is the push notification body (localized).
 	Body string `json:"body"`
 	// Data carries arbitrary string key-values forwarded to the mobile client.
 	Data map[string]string `json:"data,omitempty"`
@@ -128,7 +128,7 @@ type Publisher struct {
 }
 
 // New creates a Publisher backed by the given Kafka producer.
-// The producer must be initialised with the notification.push topic.
+// The producer must be initialized with the notification.push topic.
 // Pass nil to create a no-op publisher (useful in tests / staging environments
 // where Kafka is unavailable).
 func New(producer *kafka.Producer) *Publisher {

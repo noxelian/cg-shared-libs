@@ -27,11 +27,17 @@ func TestNewVerifier_PicksImplFromConfig(t *testing.T) {
 	_, err = v.ValidateAccessToken(at)
 	require.NoError(t, err)
 
-	m, err := NewVerifier(Config{SecretKey: testSecret, AccessTokenTTL: time.Minute, RefreshTokenTTL: time.Hour, Issuer: "i"})
+	m, err := NewVerifier(Config{SecretKey: testSecret, AcceptHS256: true, AccessTokenTTL: time.Minute, RefreshTokenTTL: time.Hour, Issuer: "i"})
 	require.NoError(t, err)
 	defer m.Close()
 	_, isManager := m.(*Manager)
 	assert.True(t, isManager, "no JWKSURL must yield a legacy *Manager")
+}
+
+func TestNewVerifier_FailsClosedWithoutJWKSWhenHS256Disabled(t *testing.T) {
+	_, err := NewVerifier(Config{SecretKey: testSecret, AcceptHS256: false})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "JWKSURL")
 }
 
 // TestValidator_ExpectedIssuer covers the opt-in iss check: enforced only when

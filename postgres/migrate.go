@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/4ubak/cg-shared-libs/logger"
+	"github.com/golang-migrate/migrate/v4"
+	// Register the PostgreSQL migration driver used by RunMigrations.
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	// Register the file migration source used by RunMigrations.
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"go.uber.org/zap"
 )
 

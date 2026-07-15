@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/4ubak/cg-shared-libs/logger"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -14,11 +13,11 @@ import (
 type EventType string
 
 const (
-	EventTypeAuth       EventType = "auth"
-	EventTypeDataAccess EventType = "data_access"
-	EventTypeDataModify EventType = "data_modify"
+	EventTypeAuth        EventType = "auth"
+	EventTypeDataAccess  EventType = "data_access"
+	EventTypeDataModify  EventType = "data_modify"
 	EventTypeAdminAction EventType = "admin_action"
-	EventTypeSecurity   EventType = "security"
+	EventTypeSecurity    EventType = "security"
 )
 
 // Status represents the outcome of an audited operation
@@ -32,9 +31,9 @@ const (
 // Event represents a structured audit log event for bank compliance
 type Event struct {
 	// Event metadata
-	EventType  EventType `json:"event_type"`
-	Timestamp  time.Time `json:"timestamp"`
-	RequestID  string    `json:"request_id,omitempty"`
+	EventType EventType `json:"event_type"`
+	Timestamp time.Time `json:"timestamp"`
+	RequestID string    `json:"request_id,omitempty"`
 
 	// Actor information
 	UserID    int64  `json:"user_id,omitempty"`
@@ -48,9 +47,9 @@ type Event struct {
 	Status     Status `json:"status"`
 
 	// Additional context
-	Details    map[string]interface{} `json:"details,omitempty"`
-	ErrorMsg   string                 `json:"error,omitempty"`
-	Duration   time.Duration          `json:"duration_ms,omitempty"`
+	Details  map[string]interface{} `json:"details,omitempty"`
+	ErrorMsg string                 `json:"error,omitempty"`
+	Duration time.Duration          `json:"duration_ms,omitempty"`
 }
 
 // ctxKey is the context key type for audit logger
@@ -216,7 +215,6 @@ func (a *auditLogger) LogAuth(ctx context.Context, action string, userID int64, 
 		Status:    status,
 		Details:   details,
 	}
-	a.enrichFromContext(ctx, &event)
 	a.Log(ctx, event)
 }
 
@@ -230,7 +228,6 @@ func (a *auditLogger) LogDataAccess(ctx context.Context, action, resource, resou
 		UserID:     userID,
 		Status:     status,
 	}
-	a.enrichFromContext(ctx, &event)
 	a.Log(ctx, event)
 }
 
@@ -245,7 +242,6 @@ func (a *auditLogger) LogDataModify(ctx context.Context, action, resource, resou
 		Status:     status,
 		Details:    details,
 	}
-	a.enrichFromContext(ctx, &event)
 	a.Log(ctx, event)
 }
 
@@ -260,7 +256,6 @@ func (a *auditLogger) LogAdminAction(ctx context.Context, action, resource, reso
 		Status:     status,
 		Details:    details,
 	}
-	a.enrichFromContext(ctx, &event)
 	a.Log(ctx, event)
 }
 
@@ -274,16 +269,7 @@ func (a *auditLogger) LogSecurity(ctx context.Context, action string, userID int
 		Status:    status,
 		Details:   details,
 	}
-	a.enrichFromContext(ctx, &event)
 	a.Log(ctx, event)
-}
-
-// enrichFromContext extracts common fields from context
-func (a *auditLogger) enrichFromContext(ctx context.Context, event *Event) {
-	// Try to get request ID from logger context
-	if l := logger.WithContext(ctx); l != nil {
-		// The request_id is already in the logger context
-	}
 }
 
 // noopAuditor is a no-op implementation for when audit is disabled

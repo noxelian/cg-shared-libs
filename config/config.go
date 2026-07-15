@@ -17,6 +17,7 @@ func Load[T any](path string) (*T, error) {
 
 	// Load from YAML file if exists
 	if path != "" {
+		// #nosec G304 -- The caller intentionally selects the service configuration file.
 		data, err := os.ReadFile(path)
 		if err != nil {
 			if !os.IsNotExist(err) {
@@ -188,4 +189,3 @@ func GetEnvDuration(key string, defaultValue time.Duration) time.Duration {
 	}
 	return defaultValue
 }
-

@@ -60,6 +60,35 @@ producer := kafka.NewProducer(cfg.Kafka, "my-topic")
 producer.Publish(ctx, "key", event)
 ```
 
+## Контракты безопасности
+
+- `grpc/adminrbac` принимает platform roles только из проверенного
+  `grpc.AuthInfo`. Входящий `x-platform-role` считается недоверенными metadata
+  и никогда не даёт доступ. Сервисы либо выпускают access JWT с подписанным
+  `platform_roles`, либо после JWT-аутентификации загружают актуальные роли и
+  вызывают `grpc.ContextWithPlatformRoles`.
+- `jwt.NewVerifier` без `JWKSURL` запускает legacy HS256 только при явно
+  установленном `AcceptHS256: true`. При `AcceptHS256: false` отсутствие JWKS
+  является ошибкой конфигурации. `platform_roles` не переносится в refresh JWT,
+  чтобы отзыв роли нельзя было продлевать на весь срок refresh-токена.
+- gRPC unary retry по умолчанию выключен для всех методов, даже если задан
+  `MaxRetries`. Идемпотентные RPC перечисляются в `RetryableMethods` (доступен
+  суффикс `/*`), либо весь клиент явно переводится в `RetryAllMethods`. Общий
+  interceptor повторяет только `Unavailable`, ограничивает весь вызов через
+  `Timeout` и использует exponential equal jitter с потолком
+  `RetryMaxWaitTime`.
+
+```yaml
+grpc_client:
+  timeout: 5s
+  max_retries: 3
+  retry_wait_time: 100ms
+  retry_max_wait_time: 2s
+  retryable_methods:
+    - /users.UserService/GetUserByID
+    - /nsi.NSIService/*
+```
+
 ## Версионирование
 
 Используем семантическое версионирование:

@@ -1,32 +1,33 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/4ubak/cg-shared-libs/ratelimit"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"github.com/4ubak/cg-shared-libs/ratelimit"
 )
 
 func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-func setupTestRedisClient(t *testing.T) (*redis.Client, func()) {
+func setupTestRedisClient(t *testing.T) (client *redis.Client, cleanup func()) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("failed to start miniredis: %v", err)
 	}
 
-	client := redis.NewClient(&redis.Options{
+	client = redis.NewClient(&redis.Options{
 		Addr: mr.Addr(),
 	})
 
-	cleanup := func() {
+	cleanup = func() {
 		client.Close()
 		mr.Close()
 	}
@@ -51,7 +52,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 
 	// First 3 requests should succeed
 	for i := 0; i < 3; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", http.NoBody)
 		req.RemoteAddr = "1.1.1.1:12345"
 		w := httptest.NewRecorder()
 
@@ -68,7 +69,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 	}
 
 	// 4th request should be rate limited
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", http.NoBody)
 	req.RemoteAddr = "1.1.1.1:12345"
 	w := httptest.NewRecorder()
 
@@ -108,7 +109,7 @@ func TestRateLimitMiddleware_DifferentUsers(t *testing.T) {
 
 	// User 1 makes 2 requests
 	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", http.NoBody)
 		req.Header.Set("X-User-ID", "user1")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -119,7 +120,7 @@ func TestRateLimitMiddleware_DifferentUsers(t *testing.T) {
 	}
 
 	// User 2 should still be able to make requests
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", http.NoBody)
 	req.Header.Set("X-User-ID", "user2")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -147,7 +148,7 @@ func TestIPRateLimitMiddleware(t *testing.T) {
 
 	// 2 requests should succeed
 	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", http.NoBody)
 		req.RemoteAddr = "1.1.1.1:12345"
 		w := httptest.NewRecorder()
 
@@ -159,7 +160,7 @@ func TestIPRateLimitMiddleware(t *testing.T) {
 	}
 
 	// 3rd request should be blocked
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", http.NoBody)
 	req.RemoteAddr = "1.1.1.1:12345"
 	w := httptest.NewRecorder()
 
@@ -192,7 +193,7 @@ func TestAuthTierUsesIPKey(t *testing.T) {
 
 	// Same IP should be rate limited regardless of user_id
 	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", http.NoBody)
 		req.RemoteAddr = "1.1.1.1:12345"
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -203,7 +204,7 @@ func TestAuthTierUsesIPKey(t *testing.T) {
 	}
 
 	// 3rd request from same IP should be blocked
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", http.NoBody)
 	req.RemoteAddr = "1.1.1.1:12345"
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -228,14 +229,16 @@ func TestWebSocketRateLimitMiddleware(t *testing.T) {
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	})
 
 	wrappedHandler := WebSocketRateLimitMiddleware(limiter, extractUserID)(handler)
 
 	// First 2 requests should succeed
 	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ws", http.NoBody)
 		w := httptest.NewRecorder()
 		wrappedHandler.ServeHTTP(w, req)
 
@@ -245,7 +248,7 @@ func TestWebSocketRateLimitMiddleware(t *testing.T) {
 	}
 
 	// 3rd request should be rate limited
-	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ws", http.NoBody)
 	w := httptest.NewRecorder()
 	wrappedHandler.ServeHTTP(w, req)
 
@@ -296,7 +299,7 @@ func TestGetClientIP(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
-			c.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
+			c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", http.NoBody)
 			c.Request.RemoteAddr = tt.remoteAddr
 
 			if tt.xff != "" {
@@ -348,7 +351,7 @@ func TestGetClientIPFromRequest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", http.NoBody)
 			req.RemoteAddr = tt.remoteAddr
 
 			if tt.xff != "" {
@@ -400,7 +403,7 @@ func TestRateLimitHeaders(t *testing.T) {
 		c.String(http.StatusOK, "ok")
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", http.NoBody)
 	req.RemoteAddr = "1.1.1.1:12345"
 	w := httptest.NewRecorder()
 
@@ -430,7 +433,9 @@ func TestHTTPRateLimitMiddleware(t *testing.T) {
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	})
 
 	extractUserID := func(r *http.Request) (int64, error) {
@@ -441,7 +446,7 @@ func TestHTTPRateLimitMiddleware(t *testing.T) {
 
 	// First 2 requests should succeed
 	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/test", http.NoBody)
 		w := httptest.NewRecorder()
 		wrappedHandler.ServeHTTP(w, req)
 
@@ -451,7 +456,7 @@ func TestHTTPRateLimitMiddleware(t *testing.T) {
 	}
 
 	// 3rd request should be rate limited
-	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/test", http.NoBody)
 	w := httptest.NewRecorder()
 	wrappedHandler.ServeHTTP(w, req)
 
@@ -481,7 +486,7 @@ func BenchmarkRateLimitMiddleware(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", http.NoBody)
 		req.RemoteAddr = "1.1.1.1:12345"
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)

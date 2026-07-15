@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/4ubak/cg-shared-libs/logger"
 	"github.com/4ubak/cg-shared-libs/metrics"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -106,7 +106,7 @@ func (c *Client) SetJSONNX(ctx context.Context, key string, value any, expiratio
 	if err != nil {
 		return false, fmt.Errorf("marshal value: %w", err)
 	}
-	result, err := c.SetNX(ctx, key, data, expiration).Result()
+	result, err := c.SetNX(ctx, key, data, expiration).Result() //nolint:staticcheck // Preserve the atomic SetNX contract exposed by this helper.
 	recordOp("set_json_nx", err)
 	return result, err
 }
@@ -194,14 +194,14 @@ func (c *Client) SetCounterExpire(ctx context.Context, key string, expiration ti
 // Lock operations for distributed locking
 
 // Lock acquires a distributed lock
-func (c *Client) Lock(ctx context.Context, key string, value string, expiration time.Duration) (bool, error) {
-	result, err := c.SetNX(ctx, key, value, expiration).Result()
+func (c *Client) Lock(ctx context.Context, key, value string, expiration time.Duration) (bool, error) {
+	result, err := c.SetNX(ctx, key, value, expiration).Result() //nolint:staticcheck // Preserve the existing distributed-lock primitive.
 	recordOp("lock", err)
 	return result, err
 }
 
 // Unlock releases a distributed lock
-func (c *Client) Unlock(ctx context.Context, key string, value string) error {
+func (c *Client) Unlock(ctx context.Context, key, value string) error {
 	script := redis.NewScript(`
 		if redis.call("get", KEYS[1]) == ARGV[1] then
 			return redis.call("del", KEYS[1])
@@ -218,4 +218,3 @@ func (c *Client) Unlock(ctx context.Context, key string, value string) error {
 func IsNil(err error) bool {
 	return errors.Is(err, redis.Nil)
 }
-

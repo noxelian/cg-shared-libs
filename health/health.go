@@ -28,18 +28,18 @@ type Checker interface {
 
 // Health holds health check state
 type Health struct {
-	mu       sync.RWMutex
-	checkers []Checker
-	version  string
+	mu        sync.RWMutex
+	checkers  []Checker
+	version   string
 	startTime time.Time
 }
 
 // Response represents health check response
 type Response struct {
-	Status    Status               `json:"status"`
-	Version   string               `json:"version,omitempty"`
-	Uptime    string               `json:"uptime,omitempty"`
-	Timestamp string               `json:"timestamp"`
+	Status    Status                 `json:"status"`
+	Version   string                 `json:"version,omitempty"`
+	Uptime    string                 `json:"uptime,omitempty"`
+	Timestamp string                 `json:"timestamp"`
 	Checks    map[string]CheckResult `json:"checks,omitempty"`
 }
 
@@ -110,9 +110,10 @@ func (h *Health) Handler() http.HandlerFunc {
 		response := h.Check(ctx)
 
 		statusCode := http.StatusOK
-		if response.Status == StatusDown {
+		switch response.Status {
+		case StatusDown:
 			statusCode = http.StatusServiceUnavailable
-		} else if response.Status == StatusDegraded {
+		case StatusDegraded:
 			statusCode = http.StatusOK // Still OK, but degraded
 		}
 

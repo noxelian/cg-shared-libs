@@ -49,15 +49,15 @@ const (
 
 // Validation errors
 var (
-	ErrFieldTooLong      = fmt.Errorf("field exceeds maximum length")
-	ErrFieldRequired     = fmt.Errorf("field is required")
-	ErrInvalidFormat     = fmt.Errorf("field has invalid format")
-	ErrInvalidEmail      = fmt.Errorf("invalid email format")
-	ErrInvalidPhone      = fmt.Errorf("invalid phone format")
-	ErrInvalidUUID       = fmt.Errorf("invalid UUID format")
-	ErrArrayTooLong      = fmt.Errorf("array exceeds maximum length")
-	ErrNegativeValue     = fmt.Errorf("value cannot be negative")
-	ErrValueOutOfRange   = fmt.Errorf("value is out of range")
+	ErrFieldTooLong    = fmt.Errorf("field exceeds maximum length")
+	ErrFieldRequired   = fmt.Errorf("field is required")
+	ErrInvalidFormat   = fmt.Errorf("field has invalid format")
+	ErrInvalidEmail    = fmt.Errorf("invalid email format")
+	ErrInvalidPhone    = fmt.Errorf("invalid phone format")
+	ErrInvalidUUID     = fmt.Errorf("invalid UUID format")
+	ErrArrayTooLong    = fmt.Errorf("array exceeds maximum length")
+	ErrNegativeValue   = fmt.Errorf("value cannot be negative")
+	ErrValueOutOfRange = fmt.Errorf("value is out of range")
 )
 
 // ValidationError holds validation error details
@@ -268,9 +268,9 @@ func (v *Validator) ValidatePositive(field string, value int64) *Validator {
 }
 
 // ValidateRange validates that a number is within range
-func (v *Validator) ValidateRange(field string, value, min, max int64) *Validator {
-	if value < min || value > max {
-		v.addError(field, fmt.Sprintf("must be between %d and %d", min, max), ErrValueOutOfRange)
+func (v *Validator) ValidateRange(field string, value, minimum, maximum int64) *Validator {
+	if value < minimum || value > maximum {
+		v.addError(field, fmt.Sprintf("must be between %d and %d", minimum, maximum), ErrValueOutOfRange)
 	}
 	return v
 }
@@ -279,7 +279,7 @@ func (v *Validator) ValidateRange(field string, value, min, max int64) *Validato
 
 var (
 	emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
-	phoneRegex = regexp.MustCompile(`^\+?[0-9]{7,15}$`)
+	phoneRegex = regexp.MustCompile(`^\+?\d{7,15}$`)
 	uuidRegex  = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 )
 
@@ -339,7 +339,7 @@ func (v *Validator) ValidatePositiveID(field string, value int64) *Validator {
 }
 
 // ValidatePageSize validates pagination parameters
-func (v *Validator) ValidatePageSize(page, pageSize int32, maxPageSize int32) *Validator {
+func (v *Validator) ValidatePageSize(page, pageSize, maxPageSize int32) *Validator {
 	if page < 0 {
 		v.addError("page", "must be >= 0", ErrValueOutOfRange)
 	}

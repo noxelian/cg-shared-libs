@@ -532,7 +532,7 @@ func TestHandleWithRetry_RetryUntilCanceledOverridesUnmarshalDisposition(t *test
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
-// --- DLQ payload marshalling ---
+// --- DLQ payload marshaling ---
 
 func TestDLQPayload_MarshalRoundtrip(t *testing.T) {
 	original := dlqPayload{
@@ -579,7 +579,7 @@ func TestHandleWithRetry_CallCountMatchesMaxRetries(t *testing.T) {
 			msg := makeMsg(`{}`)
 
 			var calls int32
-			c.handleWithRetry(context.Background(), msg, func(_ context.Context, _ kafka.Message) error { //nolint:errcheck
+			c.handleWithRetry(context.Background(), msg, func(_ context.Context, _ kafka.Message) error { //nolint:errcheck // The test asserts attempt count, not the expected terminal error.
 				atomic.AddInt32(&calls, 1)
 				return errors.New("always fails")
 			})

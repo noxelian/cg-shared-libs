@@ -1,6 +1,7 @@
 package security
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/url"
@@ -89,7 +90,7 @@ func (v *URLValidator) validateScheme(parsed *url.URL) error {
 	scheme := strings.ToLower(parsed.Scheme)
 
 	for _, allowed := range v.config.AllowedSchemes {
-		if strings.ToLower(allowed) == scheme {
+		if strings.EqualFold(allowed, scheme) {
 			return nil
 		}
 	}
@@ -143,7 +144,7 @@ func (v *URLValidator) validateResolvedIP(parsed *url.URL) error {
 	}
 
 	// Resolve hostname
-	ips, err := net.LookupIP(host)
+	addresses, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
 	if err != nil {
 		// DNS resolution failure - could be intentional SSRF bypass
 		return &ValidationError{
@@ -154,8 +155,8 @@ func (v *URLValidator) validateResolvedIP(parsed *url.URL) error {
 	}
 
 	// Check all resolved IPs
-	for _, ip := range ips {
-		if err := v.checkIP(ip, parsed.String()); err != nil {
+	for _, address := range addresses {
+		if err := v.checkIP(address.IP, parsed.String()); err != nil {
 			return err
 		}
 	}
@@ -339,7 +340,7 @@ func (v *URLValidator) ValidateRedirectURL(originalURL, redirectURL string) erro
 	}
 
 	// Check for protocol downgrade (HTTPS -> HTTP)
-	if strings.ToLower(original.Scheme) == "https" && strings.ToLower(redirect.Scheme) == "http" {
+	if strings.EqualFold(original.Scheme, "https") && strings.EqualFold(redirect.Scheme, "http") {
 		return &ValidationError{
 			URL:    redirectURL,
 			Reason: "protocol downgrade not allowed",

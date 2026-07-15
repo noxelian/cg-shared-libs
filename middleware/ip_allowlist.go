@@ -19,7 +19,7 @@ import (
 // configuration error, not as "allow nothing".
 //
 // Client IP is extracted via GetClientIP (defined in ratelimit.go), which
-// honours X-Forwarded-For and X-Real-IP headers in that order before falling
+// honors X-Forwarded-For and X-Real-IP headers in that order before falling
 // back to Gin's c.ClientIP().
 //
 // IMPORTANT — Trusted proxies (X-Forwarded-For trust model):
@@ -28,12 +28,12 @@ import (
 //	real client IP. To prevent spoofing by untrusted upstream callers, the
 //	caller MUST configure Gin's trusted-proxies list via
 //	    engine.SetTrustedProxies([]string{"<reverse-proxy CIDR>"})
-//	Without this configuration Gin's c.ClientIP() will honour XFF from any
+//	Without this configuration Gin's c.ClientIP() will honor XFF from any
 //	caller, allowing an attacker to bypass the allowlist by setting the
 //	header. See https://gin-gonic.com/docs/examples/security/ for details.
 //
 // Known limitation: whitespace inside comma-separated X-Forwarded-For values
-// is NOT trimmed (matches the existing GetClientIP behaviour). Reverse proxies
+// is NOT trimmed (matches the existing GetClientIP behavior). Reverse proxies
 // SHOULD emit canonical "ip1, ip2" format; aberrant " ip1 ,ip2" may parse to
 // an invalid IP and fail-closed (403).
 //

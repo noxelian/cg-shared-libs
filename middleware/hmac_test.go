@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -57,7 +58,7 @@ func TestHMACSignatureMiddleware_ValidSignature(t *testing.T) {
 	called := false
 	router := newHMACTestRouter(t, key, &called)
 
-	req := httptest.NewRequest(http.MethodPost, "/echo", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/echo", bytes.NewReader(body))
 	req.Header.Set(SignatureHeader, sig)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -82,7 +83,7 @@ func TestHMACSignatureMiddleware_InvalidSignature(t *testing.T) {
 	called := false
 	router := newHMACTestRouter(t, key, &called)
 
-	req := httptest.NewRequest(http.MethodPost, "/echo", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/echo", bytes.NewReader(body))
 	req.Header.Set(SignatureHeader, wrongSig)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -106,7 +107,7 @@ func TestHMACSignatureMiddleware_MissingHeader(t *testing.T) {
 	called := false
 	router := newHMACTestRouter(t, key, &called)
 
-	req := httptest.NewRequest(http.MethodPost, "/echo", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/echo", bytes.NewReader(body))
 	// no signature header
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -125,7 +126,7 @@ func TestHMACSignatureMiddleware_MalformedHex(t *testing.T) {
 	body := []byte(`{}`)
 
 	router := newHMACTestRouter(t, key, nil)
-	req := httptest.NewRequest(http.MethodPost, "/echo", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/echo", bytes.NewReader(body))
 	req.Header.Set(SignatureHeader, "ZZZ-not-hex-XYZ!!!")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -143,7 +144,7 @@ func TestHMACSignatureMiddleware_EmptyBody(t *testing.T) {
 
 	called := false
 	router := newHMACTestRouter(t, key, &called)
-	req := httptest.NewRequest(http.MethodPost, "/echo", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/echo", bytes.NewReader(body))
 	req.Header.Set(SignatureHeader, sig)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -178,7 +179,7 @@ func TestHMACSignatureMiddleware_BodyRestored(t *testing.T) {
 		c.JSON(http.StatusOK, p)
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/json", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/json", bytes.NewReader(body))
 	req.Header.Set(SignatureHeader, sig)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -202,7 +203,7 @@ func TestHMACSignatureMiddleware_HexCase(t *testing.T) {
 	for _, sig := range []string{sigLower, sigUpper} {
 		called := false
 		router := newHMACTestRouter(t, key, &called)
-		req := httptest.NewRequest(http.MethodPost, "/echo", bytes.NewReader(body))
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/echo", bytes.NewReader(body))
 		req.Header.Set(SignatureHeader, sig)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -256,7 +257,7 @@ func TestHMACSignatureMiddleware_OversizedBody(t *testing.T) {
 	called := false
 	router := newHMACTestRouter(t, key, &called)
 
-	req := httptest.NewRequest(http.MethodPost, "/echo", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/echo", bytes.NewReader(body))
 	req.Header.Set(SignatureHeader, sig)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -282,7 +283,7 @@ func TestHMACSignatureMiddleware_BodyAtCap(t *testing.T) {
 	called := false
 	router := newHMACTestRouter(t, key, &called)
 
-	req := httptest.NewRequest(http.MethodPost, "/echo", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/echo", bytes.NewReader(body))
 	req.Header.Set(SignatureHeader, sig)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -321,7 +322,7 @@ func TestHMACSignatureMiddleware_MultipartBody(t *testing.T) {
 
 	called := false
 	router := newHMACTestRouter(t, key, &called)
-	req := httptest.NewRequest(http.MethodPost, "/echo", bytes.NewReader(rawBody))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/echo", bytes.NewReader(rawBody))
 	req.Header.Set(SignatureHeader, sig)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	rec := httptest.NewRecorder()
@@ -360,7 +361,7 @@ func TestHMACSignatureMiddleware_BodyReadError(t *testing.T) {
 
 	body := []byte(`{}`)
 	sig := computeSignature([]byte("supersecret"), body)
-	req := httptest.NewRequest(http.MethodPost, "/echo", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/echo", bytes.NewReader(body))
 	req.Header.Set(SignatureHeader, sig)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)

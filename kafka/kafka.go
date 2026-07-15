@@ -61,7 +61,7 @@ func (ft *FlexibleTime) UnmarshalJSON(data []byte) error {
 
 // MarshalJSON implements json.Marshaler for FlexibleTime
 func (ft FlexibleTime) MarshalJSON() ([]byte, error) {
-	return json.Marshal(ft.Time.Format(time.RFC3339))
+	return json.Marshal(ft.Format(time.RFC3339))
 }
 
 // UnmarshalError signals that a Kafka message could not be decoded due to a

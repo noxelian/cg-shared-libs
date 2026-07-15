@@ -70,6 +70,9 @@ type AppContext struct {
 	OrgType string `json:"org_type,omitempty"`
 	CityID  int64  `json:"city_id,omitempty"`
 	OrgRole string `json:"org_role,omitempty"`
+	// PlatformRoles is signed authorization evidence. Callers must never derive
+	// it from transport metadata supplied by the token holder.
+	PlatformRoles []string `json:"platform_roles,omitempty"`
 	// OrgIDs is the user's complete active organization-membership set. It is
 	// independent from OrgID, which represents an optional selected org.
 	OrgIDs []string `json:"orgs"`
@@ -83,12 +86,14 @@ type Claims struct {
 	TokenType TokenType `json:"token_type,omitempty"`
 
 	// App context claims (optional; backward-compat: absent = "client")
-	App     string   `json:"app,omitempty"`
-	OrgID   string   `json:"org_id,omitempty"`
-	OrgType string   `json:"org_type,omitempty"`
-	CityID  int64    `json:"city_id,omitempty"`
-	OrgRole string   `json:"org_role,omitempty"`
-	OrgIDs  []string `json:"orgs"`
+	App     string `json:"app,omitempty"`
+	OrgID   string `json:"org_id,omitempty"`
+	OrgType string `json:"org_type,omitempty"`
+	CityID  int64  `json:"city_id,omitempty"`
+	OrgRole string `json:"org_role,omitempty"`
+	// PlatformRoles contains issuer-verified platform-wide role codes.
+	PlatformRoles []string `json:"platform_roles,omitempty"`
+	OrgIDs        []string `json:"orgs"`
 
 	jwt.RegisteredClaims
 }
@@ -194,6 +199,11 @@ func buildClaims(userID int64, phone, deviceID string, appCtx AppContext, ttl ti
 			IssuedAt:  jwt.NewNumericDate(now),
 			Issuer:    issuer,
 		},
+	}
+	// Refresh tokens deliberately do not carry authorization roles. Otherwise a
+	// revoked platform role could be renewed for the full refresh-token lifetime.
+	if tokenType == TokenTypeAccess {
+		claims.PlatformRoles = slices.Clone(appCtx.PlatformRoles)
 	}
 
 	return claims, expiresAt
