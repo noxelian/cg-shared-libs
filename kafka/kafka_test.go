@@ -39,6 +39,55 @@ func TestExtraWriterPreservesAcknowledgementGuarantee(t *testing.T) {
 	assert.Equal(t, "notification.push", extra.Topic)
 }
 
+func TestKafkaEnvironmentSuffixes(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Brokers:       []string{"kafka:9092"},
+		GroupID:       "notification-service",
+		TopicSuffix:   ".stage",
+		GroupIDSuffix: "-stage",
+		DLQEnabled:    true,
+	}
+
+	producer := NewProducer(cfg, "notification.push")
+	assert.Equal(t, "notification.push.stage", producer.topic)
+	assert.Equal(t, "notification.push.stage", producer.writer.Topic)
+
+	extra := producer.writerFor("chat.events")
+	assert.Equal(t, "chat.events.stage", extra.Topic)
+
+	consumer := NewConsumer(cfg, "notification.push")
+	assert.Equal(t, "notification.push.stage", consumer.topic)
+	assert.Equal(t, "notification-service-stage", consumer.groupID)
+	assert.Equal(t, "notification.push.stage.dlq", consumer.dlqTopic)
+	require.NotNil(t, consumer.dlqProducer)
+	dlqProducer, ok := consumer.dlqProducer.(*Producer)
+	require.True(t, ok)
+	assert.Equal(t, "notification.push.stage.dlq", dlqProducer.topic)
+}
+
+func TestKafkaEnvironmentSuffixesAreIdempotent(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		TopicSuffix:   ".stage",
+		GroupIDSuffix: "-stage",
+	}
+
+	assert.Equal(t, "payment.events.stage", cfg.Topic("payment.events.stage"))
+	assert.Equal(t, "cg-orders-payment-stage", cfg.ConsumerGroup("cg-orders-payment-stage"))
+}
+
+func TestKafkaEnvironmentSuffixesDefaultToProductionNames(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{}
+
+	assert.Equal(t, "request.events", cfg.Topic("request.events"))
+	assert.Equal(t, "cg-ai-request-classifier", cfg.ConsumerGroup("cg-ai-request-classifier"))
+}
+
 func TestNewKeyedProducerRoutesEqualKeysToSamePartition(t *testing.T) {
 	t.Parallel()
 

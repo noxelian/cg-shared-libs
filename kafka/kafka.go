@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -134,6 +135,8 @@ func IsRetryUntilCanceled(err error) bool {
 type Config struct {
 	Brokers       []string      `yaml:"brokers" env:"KAFKA_BROKERS" env-default:"localhost:9092"`
 	GroupID       string        `yaml:"group_id" env:"KAFKA_GROUP_ID"`
+	TopicSuffix   string        `yaml:"topic_suffix" env:"KAFKA_TOPIC_SUFFIX"`
+	GroupIDSuffix string        `yaml:"group_id_suffix" env:"KAFKA_GROUP_ID_SUFFIX"`
 	MinBytes      int           `yaml:"min_bytes" env:"KAFKA_MIN_BYTES" env-default:"10000"`    // 10KB
 	MaxBytes      int           `yaml:"max_bytes" env:"KAFKA_MAX_BYTES" env-default:"10000000"` // 10MB
 	MaxWait       time.Duration `yaml:"max_wait" env:"KAFKA_MAX_WAIT" env-default:"500ms"`
@@ -163,6 +166,34 @@ type Config struct {
 	ReadBackoffMax time.Duration `yaml:"read_backoff_max" env:"KAFKA_READ_BACKOFF_MAX" env-default:"1s"`
 }
 
+// Topic returns the environment-qualified topic name. Production keeps the
+// empty suffix; deployments that share a broker but not their backing data use
+// a suffix such as ".stage". Qualification is idempotent, including DLQ names
+// derived from an already-qualified source topic.
+func (c Config) Topic(topic string) string {
+	return qualifyTopic(topic, c.TopicSuffix)
+}
+
+// ConsumerGroup returns the environment-qualified consumer group. A separate
+// group suffix is required because topic and group naming conventions differ.
+func (c Config) ConsumerGroup(groupID string) string {
+	groupID = strings.TrimSpace(groupID)
+	suffix := strings.TrimSpace(c.GroupIDSuffix)
+	if groupID == "" || suffix == "" || strings.HasSuffix(groupID, suffix) {
+		return groupID
+	}
+	return groupID + suffix
+}
+
+func qualifyTopic(topic, suffix string) string {
+	topic = strings.TrimSpace(topic)
+	suffix = strings.TrimSpace(suffix)
+	if topic == "" || suffix == "" || strings.HasSuffix(topic, suffix) || strings.Contains(topic, suffix+".") {
+		return topic
+	}
+	return topic + suffix
+}
+
 // Event represents a domain event
 type Event struct {
 	ID        string          `json:"id"`
@@ -182,9 +213,10 @@ type Metadata struct {
 
 // Producer wraps kafka.Writer
 type Producer struct {
-	writer     *kafka.Writer
-	topic      string
-	requireKey bool
+	writer      *kafka.Writer
+	topic       string
+	topicSuffix string
+	requireKey  bool
 
 	// extraWriters holds per-topic writers spawned lazily by PublishJSONTo.
 	// Guarded by extraMu — both fields stay nil for callers that only ever
@@ -208,6 +240,7 @@ func NewKeyedProducer(cfg Config, topic string) *Producer {
 }
 
 func newProducer(cfg Config, topic string, balancer kafka.Balancer, requireKey bool) *Producer {
+	topic = cfg.Topic(topic)
 	writer := newWriterWithBalancer(cfg, topic, balancer)
 
 	logger.Info("Kafka producer created",
@@ -216,9 +249,10 @@ func newProducer(cfg Config, topic string, balancer kafka.Balancer, requireKey b
 	)
 
 	return &Producer{
-		writer:     writer,
-		topic:      topic,
-		requireKey: requireKey,
+		writer:      writer,
+		topic:       topic,
+		topicSuffix: cfg.TopicSuffix,
+		requireKey:  requireKey,
 	}
 }
 
@@ -229,7 +263,7 @@ func newWriter(cfg Config, topic string) *kafka.Writer {
 func newWriterWithBalancer(cfg Config, topic string, balancer kafka.Balancer) *kafka.Writer {
 	return &kafka.Writer{
 		Addr:         kafka.TCP(cfg.Brokers...),
-		Topic:        topic,
+		Topic:        cfg.Topic(topic),
 		Balancer:     balancer,
 		BatchSize:    cfg.BatchSize,
 		BatchTimeout: cfg.BatchTimeout,
@@ -302,6 +336,7 @@ func (p *Producer) PublishJSON(ctx context.Context, key string, data any) error 
 // Internally creates a kafka-go Writer per target topic on first use and
 // caches it. Cleared on Close().
 func (p *Producer) PublishJSONTo(ctx context.Context, topic, key string, data any) error {
+	topic = qualifyTopic(topic, p.topicSuffix)
 	if topic == "" || topic == p.topic {
 		return p.PublishJSON(ctx, key, data)
 	}
@@ -329,6 +364,7 @@ func (p *Producer) PublishJSONTo(ctx context.Context, topic, key string, data an
 }
 
 func (p *Producer) writerFor(topic string) *kafka.Writer {
+	topic = qualifyTopic(topic, p.topicSuffix)
 	p.extraMu.Lock()
 	defer p.extraMu.Unlock()
 
@@ -455,10 +491,12 @@ func NewConsumer(cfg Config, topic string) *Consumer {
 // NewConsumerWithOptions creates a Kafka consumer with explicit per-consumer
 // behavior such as privacy-safe DLQ redaction.
 func NewConsumerWithOptions(cfg Config, topic string, options ...ConsumerOption) *Consumer {
+	topic = cfg.Topic(topic)
+	groupID := cfg.ConsumerGroup(cfg.GroupID)
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        cfg.Brokers,
 		Topic:          topic,
-		GroupID:        cfg.GroupID,
+		GroupID:        groupID,
 		MinBytes:       cfg.MinBytes,
 		MaxBytes:       cfg.MaxBytes,
 		MaxWait:        cfg.MaxWait,
@@ -469,7 +507,7 @@ func NewConsumerWithOptions(cfg Config, topic string, options ...ConsumerOption)
 	logger.Info("Kafka consumer created",
 		zap.Strings("brokers", cfg.Brokers),
 		zap.String("topic", topic),
-		zap.String("group_id", cfg.GroupID),
+		zap.String("group_id", groupID),
 	)
 
 	rc := newRetryConfig(cfg)
@@ -486,7 +524,7 @@ func NewConsumerWithOptions(cfg Config, topic string, options ...ConsumerOption)
 	consumer := &Consumer{
 		reader:      reader,
 		topic:       topic,
-		groupID:     cfg.GroupID,
+		groupID:     groupID,
 		retryCfg:    rc,
 		dlqProducer: dlqProd,
 		dlqTopic:    topic + ".dlq",

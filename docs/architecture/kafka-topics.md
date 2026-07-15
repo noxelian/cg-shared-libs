@@ -6,6 +6,24 @@ Single source of truth: [`kafka/topics.go`](../../kafka/topics.go). Every produc
 
 `<bounded-context>.<entity>.events` for domain streams, `<bounded-context>.events` for cross-cutting realtime fanout. Existing names that don't match the pattern are kept for backwards compatibility but new topics should follow it.
 
+## Environment isolation on a shared broker
+
+Production and staging may share Kafka brokers, but they must never share topic
+names or consumer-group IDs because their databases and side effects are
+different. Production keeps the canonical names. Staging sets both values on
+every Kafka-enabled deployment:
+
+```text
+KAFKA_TOPIC_SUFFIX=.stage
+KAFKA_GROUP_ID_SUFFIX=-stage
+```
+
+The shared Kafka constructors apply these suffixes to producers, consumers,
+dynamic `PublishJSONTo` targets, and DLQ topics. Qualification is idempotent so
+an explicitly configured `payment.events.stage` is not changed twice. Code
+that constructs `segmentio/kafka-go` readers directly must call
+`Config.Topic(...)` and `Config.ConsumerGroup(...)` explicitly.
+
 ## Catalog
 
 | Constant | Topic | Producer | Consumer(s) | Purpose |
