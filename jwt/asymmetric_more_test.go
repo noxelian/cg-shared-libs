@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +22,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type closeErrorBody struct {
+	io.Reader
+}
+
+func (closeErrorBody) Close() error { return assertErr{} }
 
 func decodePayload(t *testing.T, token string) map[string]any {
 	t.Helper()
@@ -49,7 +62,7 @@ func TestValidator_RejectsNoneAlg(t *testing.T) {
 	defer srv.Close()
 	v, err := NewValidator(Config{JWKSURL: srv.URL, AcceptHS256: true, SecretKey: testSecret, JWKSRefresh: time.Hour, JWKSTimeout: 2 * time.Second})
 	require.NoError(t, err)
-	defer v.Close()
+	t.Cleanup(func() { require.NoError(t, v.Close()) })
 
 	claims, _ := buildClaims(1, "+7", "d", AppContext{}, time.Minute, TokenTypeAccess, "test-issuer")
 	tok := gojwt.NewWithClaims(gojwt.SigningMethodNone, claims)
@@ -67,7 +80,7 @@ func TestValidator_KeyfuncBranches(t *testing.T) {
 	defer srv.Close()
 	v, err := NewValidator(Config{JWKSURL: srv.URL, AcceptHS256: false, JWKSRefresh: time.Hour, JWKSTimeout: 2 * time.Second})
 	require.NoError(t, err)
-	defer v.Close()
+	t.Cleanup(func() { require.NoError(t, v.Close()) })
 
 	claims, _ := buildClaims(1, "+7", "d", AppContext{}, time.Minute, TokenTypeAccess, "test-issuer")
 	otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -103,7 +116,7 @@ func TestValidator_KeyfuncBranches(t *testing.T) {
 		// HS256-only validator (no JWKSURL) receiving an RS256 token.
 		vHS, err := NewValidator(Config{AcceptHS256: true, SecretKey: testSecret})
 		require.NoError(t, err)
-		defer vHS.Close()
+		t.Cleanup(func() { require.NoError(t, vHS.Close()) })
 		at, _, err := s.GenerateAccessToken(1, "+7", "d")
 		require.NoError(t, err)
 		_, err = vHS.ValidateAccessToken(at)
@@ -117,7 +130,7 @@ func TestValidator_ExpiredRS256(t *testing.T) {
 	defer srv.Close()
 	v, err := NewValidator(Config{JWKSURL: srv.URL, AcceptHS256: false, JWKSRefresh: time.Hour, JWKSTimeout: 2 * time.Second})
 	require.NoError(t, err)
-	defer v.Close()
+	t.Cleanup(func() { require.NoError(t, v.Close()) })
 
 	// Craft an already-expired RS256 token deterministically (no sleep) by
 	// signing past timestamps with the signer's own key.
@@ -146,7 +159,7 @@ func TestValidator_ValidateRefreshTokenRS256(t *testing.T) {
 	defer srv.Close()
 	v, err := NewValidator(Config{JWKSURL: srv.URL, AcceptHS256: false, JWKSRefresh: time.Hour, JWKSTimeout: 2 * time.Second})
 	require.NoError(t, err)
-	defer v.Close()
+	t.Cleanup(func() { require.NoError(t, v.Close()) })
 
 	pair, err := s.GenerateTokenPair(55, "+7", "d")
 	require.NoError(t, err)
@@ -224,10 +237,24 @@ func TestJWKSCache_HTTP500(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	c := newJWKSCache(srv.URL, time.Hour, time.Second, &http.Client{Timeout: time.Second})
+	c := newJWKSCache(srv.URL, time.Hour, time.Second, defaultJWKSMaxStale, &http.Client{Timeout: time.Second})
 	defer c.Close()
 	err := c.refreshNow(context.Background())
 	assert.Error(t, err, "non-200 JWKS response must error")
+}
+
+func TestJWKSCache_PropagatesResponseCloseError(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       closeErrorBody{Reader: strings.NewReader(`{"keys":[]}`)},
+			Header:     make(http.Header),
+		}, nil
+	})}
+	c := newJWKSCache("https://issuer.test/jwks", time.Hour, time.Second, defaultJWKSMaxStale, client)
+
+	err := c.refreshNow(context.Background())
+	require.ErrorContains(t, err, "close response body")
 }
 
 // TestClaimsIdentity_ManagerVsSigner proves design intent #5: HS256 (Manager)
@@ -311,7 +338,7 @@ func TestNewValidator_HS256NoSecretWithJWKS(t *testing.T) {
 	defer srv.Close()
 	v, err := NewValidator(Config{JWKSURL: srv.URL, AcceptHS256: true, SecretKey: "", JWKSRefresh: time.Hour, JWKSTimeout: 2 * time.Second})
 	require.NoError(t, err)
-	defer v.Close()
+	t.Cleanup(func() { require.NoError(t, v.Close()) })
 
 	assert.False(t, v.acceptHS256, "no secret => effective acceptHS256 must be false")
 	assert.Equal(t, []string{"RS256"}, v.validMethods, "validMethods must not advertise HS256 without a key")

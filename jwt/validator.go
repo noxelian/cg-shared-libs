@@ -61,7 +61,7 @@ func NewValidator(cfg Config) (*Validator, error) {
 		if timeout == 0 {
 			timeout = 5 * time.Second
 		}
-		v.jwks = newJWKSCache(cfg.JWKSURL, refresh, timeout, &http.Client{Timeout: timeout})
+		v.jwks = newJWKSCache(cfg.JWKSURL, refresh, timeout, cfg.JWKSMaxStale, &http.Client{Timeout: timeout})
 
 		if err := v.jwks.start(context.Background()); err != nil {
 			if !v.acceptHS256 {

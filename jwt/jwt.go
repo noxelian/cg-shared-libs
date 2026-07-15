@@ -38,6 +38,9 @@ type Config struct {
 	JWKSURL     string        `yaml:"jwks_url" env:"JWT_JWKS_URL"`
 	JWKSRefresh time.Duration `yaml:"jwks_refresh" env:"JWT_JWKS_REFRESH" env-default:"15m"`
 	JWKSTimeout time.Duration `yaml:"jwks_timeout" env:"JWT_JWKS_TIMEOUT" env-default:"5s"`
+	// JWKSMaxStale bounds how long the validator trusts the last successfully
+	// fetched key set while refreshes fail. Zero uses the 24-hour default.
+	JWKSMaxStale time.Duration `yaml:"jwks_max_stale" env:"JWT_JWKS_MAX_STALE" env-default:"24h"`
 
 	// ExpectedIssuer, when non-empty, makes Validator reject tokens whose `iss`
 	// claim differs. Leave EMPTY during the dual-accept window — services
@@ -47,8 +50,8 @@ type Config struct {
 	ExpectedIssuer string `yaml:"expected_issuer" env:"JWT_EXPECTED_ISSUER"`
 
 	// Cutover gates.
-	AcceptHS256   bool `yaml:"accept_hs256" env:"JWT_ACCEPT_HS256" env-default:"true"` // Validator also accepts legacy HS256; flip false at end of migration
-	SignWithRS256 bool `yaml:"sign_rs256" env:"JWT_SIGN_RS256" env-default:"false"`    // issuer mints RS256 instead of HS256 (consumed by cg-users wiring)
+	AcceptHS256   bool `yaml:"accept_hs256" env:"JWT_ACCEPT_HS256" env-default:"false"` // Legacy HS256 verification requires explicit opt-in.
+	SignWithRS256 bool `yaml:"sign_rs256" env:"JWT_SIGN_RS256" env-default:"false"`     // issuer mints RS256 instead of HS256 (consumed by cg-users wiring)
 }
 
 // TokenType represents the type of JWT token

@@ -293,7 +293,7 @@ func TestSimpleHandler_ResponseIsJSON(t *testing.T) {
 func TestRedisChecker_Success(t *testing.T) {
 	s := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: s.Addr()})
-	defer client.Close()
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
 
 	checker := health.NewRedisChecker(client, "redis")
 	assert.Equal(t, "redis", checker.Name())
@@ -306,7 +306,7 @@ func TestRedisChecker_Failure(t *testing.T) {
 	// Use a client pointing to a closed server
 	s := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: s.Addr()})
-	defer client.Close()
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
 
 	s.Close()
 
@@ -373,7 +373,7 @@ func TestKafkaChecker_ReachableBroker_ReturnsNil(t *testing.T) {
 	// Start a real TCP listener on a random port
 	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer ln.Close()
+	t.Cleanup(func() { require.NoError(t, ln.Close()) })
 
 	checker := health.NewKafkaChecker([]string{ln.Addr().String()}, "kafka")
 	assert.Equal(t, "kafka", checker.Name())

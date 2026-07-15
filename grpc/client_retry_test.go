@@ -33,6 +33,35 @@ func TestRetryInterceptor_DoesNotRetryMethodsByDefault(t *testing.T) {
 	assert.Equal(t, 1, attempts)
 }
 
+func TestRetryInterceptor_DefaultTimeoutBoundsRetryEnabledMethod(t *testing.T) {
+	var deadline time.Time
+	err := invokeWithConfig(context.Background(), ClientConfig{
+		MaxRetries:       3,
+		RetryableMethods: []string{getMethod},
+	}, getMethod, func(ctx context.Context, _ string, _, _ any, _ *grpcgo.ClientConn, _ ...grpcgo.CallOption) error {
+		var ok bool
+		deadline, ok = ctx.Deadline()
+		require.True(t, ok)
+		return nil
+	})
+
+	require.NoError(t, err)
+	remaining := time.Until(deadline)
+	assert.Greater(t, remaining, defaultRetryTotalTimeout-time.Second)
+	assert.LessOrEqual(t, remaining, defaultRetryTotalTimeout)
+}
+
+func TestRetryInterceptor_NonRetriedCallKeepsNoDeadline(t *testing.T) {
+	err := invokeWithConfig(context.Background(), ClientConfig{MaxRetries: 3}, createMethod,
+		func(ctx context.Context, _ string, _, _ any, _ *grpcgo.ClientConn, _ ...grpcgo.CallOption) error {
+			_, hasDeadline := ctx.Deadline()
+			assert.False(t, hasDeadline)
+			return nil
+		})
+
+	require.NoError(t, err)
+}
+
 func TestRetryInterceptor_RetriesOnlyExplicitlySafeMethods(t *testing.T) {
 	tests := []struct {
 		name string

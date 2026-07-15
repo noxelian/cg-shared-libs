@@ -20,11 +20,27 @@ func setupTestRedis(t *testing.T) (client *redis.Client, cleanup func()) {
 	})
 
 	cleanup = func() {
-		client.Close()
+		if err := client.Close(); err != nil {
+			t.Errorf("close Redis client: %v", err)
+		}
 		mr.Close()
 	}
 
 	return client, cleanup
+}
+
+func TestRateLimitMembersUniqueAtSameTimestamp(t *testing.T) {
+	now := time.Unix(123, 456)
+	first := newMembers(now, 2)
+	second := newMembers(now, 2)
+
+	seen := make(map[any]struct{}, len(first)+len(second))
+	for _, member := range append(first, second...) {
+		if _, exists := seen[member.Member]; exists {
+			t.Fatalf("duplicate rate-limit member %q", member.Member)
+		}
+		seen[member.Member] = struct{}{}
+	}
 }
 
 func TestLimiter_Allow(t *testing.T) {

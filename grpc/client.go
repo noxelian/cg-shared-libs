@@ -377,7 +377,10 @@ func generateClientRequestID() string {
 	return uuid.New().String()
 }
 
-const defaultRetryMaxWaitTime = 2 * time.Second
+const (
+	defaultRetryMaxWaitTime  = 2 * time.Second
+	defaultRetryTotalTimeout = 30 * time.Second
+)
 
 func retryInterceptor(cfg ClientConfig) grpc.UnaryClientInterceptor {
 	return func(
@@ -388,16 +391,22 @@ func retryInterceptor(cfg ClientConfig) grpc.UnaryClientInterceptor {
 		invoker grpc.UnaryInvoker,
 		opts ...grpc.CallOption,
 	) error {
-		callCtx := ctx
-		if cfg.Timeout > 0 {
-			var cancel context.CancelFunc
-			callCtx, cancel = context.WithTimeout(ctx, cfg.Timeout)
-			defer cancel()
-		}
-
 		maxRetries := cfg.MaxRetries
 		if maxRetries < 0 || !methodAllowsRetry(method, cfg) {
 			maxRetries = 0
+		}
+
+		callCtx := ctx
+		totalTimeout := cfg.Timeout
+		if totalTimeout <= 0 && maxRetries > 0 {
+			if _, hasCallerDeadline := ctx.Deadline(); !hasCallerDeadline {
+				totalTimeout = defaultRetryTotalTimeout
+			}
+		}
+		if totalTimeout > 0 {
+			var cancel context.CancelFunc
+			callCtx, cancel = context.WithTimeout(ctx, totalTimeout)
+			defer cancel()
 		}
 
 		var lastErr error

@@ -37,6 +37,9 @@ const (
 	// minRefetchInterval rate-limits refresh-on-unknown-kid so a flood of
 	// forged kids cannot turn into a fetch storm against the issuer.
 	minRefetchInterval = 30 * time.Second
+	// defaultJWKSMaxStale limits last-known-good operation during an extended
+	// issuer outage. Beyond this point signature verification fails closed.
+	defaultJWKSMaxStale = 24 * time.Hour
 	// maxJWKSBytes caps the JWKS response we will read.
 	maxJWKSBytes = 1 << 20
 	// maxRSAModulusBits caps a published key's modulus (RSA-8192) to bound
@@ -71,6 +74,7 @@ type jwksCache struct {
 	fetch        jwksFetcher
 	refreshEvery time.Duration
 	timeout      time.Duration
+	maxStale     time.Duration
 
 	mu          sync.RWMutex
 	keys        map[string]*rsa.PublicKey
@@ -84,7 +88,7 @@ type jwksCache struct {
 }
 
 // newJWKSCache builds a cache backed by an HTTP GET against jwksURL.
-func newJWKSCache(jwksURL string, refresh, timeout time.Duration, client *http.Client) *jwksCache {
+func newJWKSCache(jwksURL string, refresh, timeout, maxStale time.Duration, client *http.Client) *jwksCache {
 	fetch := func(ctx context.Context) ([]byte, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURL, http.NoBody)
 		if err != nil {
@@ -94,21 +98,36 @@ func newJWKSCache(jwksURL string, refresh, timeout time.Duration, client *http.C
 		if err != nil {
 			return nil, err
 		}
-		defer resp.Body.Close()
+		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxJWKSBytes))
+		closeErr := resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("jwks: read response: %w", readErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("jwks: close response body: %w", closeErr)
+		}
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("jwks: unexpected status %d", resp.StatusCode)
 		}
-		return io.ReadAll(io.LimitReader(resp.Body, maxJWKSBytes))
+		return raw, nil
 	}
-	return newJWKSCacheWithFetcher(fetch, refresh, timeout)
+	return newJWKSCacheWithFetcherMaxStale(fetch, refresh, timeout, maxStale)
 }
 
 // newJWKSCacheWithFetcher builds a cache from a custom fetcher (used in tests).
 func newJWKSCacheWithFetcher(fetch jwksFetcher, refresh, timeout time.Duration) *jwksCache {
+	return newJWKSCacheWithFetcherMaxStale(fetch, refresh, timeout, defaultJWKSMaxStale)
+}
+
+func newJWKSCacheWithFetcherMaxStale(fetch jwksFetcher, refresh, timeout, maxStale time.Duration) *jwksCache {
+	if maxStale <= 0 {
+		maxStale = defaultJWKSMaxStale
+	}
 	return &jwksCache{
 		fetch:        fetch,
 		refreshEvery: refresh,
 		timeout:      timeout,
+		maxStale:     maxStale,
 		keys:         map[string]*rsa.PublicKey{},
 		stop:         make(chan struct{}),
 	}
@@ -171,36 +190,48 @@ func (c *jwksCache) refreshNow(ctx context.Context) error {
 	return nil
 }
 
-// publicKey resolves a kid to an RSA public key, refreshing once (rate-limited)
-// if the kid is unknown, then falling back to whatever is cached.
-func (c *jwksCache) publicKey(kid string) (crypto.PublicKey, error) {
+func (c *jwksCache) snapshot(kid string) (*rsa.PublicKey, time.Time, time.Time) {
 	c.mu.RLock()
-	key := c.keys[kid]
-	last := c.lastAttempt
-	c.mu.RUnlock()
-	if key != nil {
+	defer c.mu.RUnlock()
+	return c.keys[kid], c.lastFetch, c.lastAttempt
+}
+
+func (c *jwksCache) isStale(lastFetch time.Time) bool {
+	return lastFetch.IsZero() || time.Since(lastFetch) > c.maxStale
+}
+
+// publicKey resolves a kid to an RSA public key, refreshing once (rate-limited)
+// if the kid is unknown or the last successful key set is too stale.
+func (c *jwksCache) publicKey(kid string) (crypto.PublicKey, error) {
+	key, lastFetch, lastAttempt := c.snapshot(kid)
+	if key != nil && !c.isStale(lastFetch) {
 		return key, nil
 	}
 
-	if time.Since(last) > minRefetchInterval {
+	if time.Since(lastAttempt) > minRefetchInterval {
 		// Serialize on-demand refreshes so a burst of unknown-kid tokens
 		// collapses into a single fetch (no thundering herd at key rotation),
 		// and double-check under the lock in case a peer just refreshed.
 		c.refreshMu.Lock()
-		c.mu.RLock()
-		key = c.keys[kid]
-		throttled := time.Since(c.lastAttempt) <= minRefetchInterval
-		c.mu.RUnlock()
-		if key == nil && !throttled {
-			_ = c.refreshNow(context.Background())
-			c.mu.RLock()
-			key = c.keys[kid]
-			c.mu.RUnlock()
+		key, lastFetch, lastAttempt = c.snapshot(kid)
+		throttled := time.Since(lastAttempt) <= minRefetchInterval
+		if (key == nil || c.isStale(lastFetch)) && !throttled {
+			refreshErr := c.refreshNow(context.Background())
+			key, lastFetch, _ = c.snapshot(kid)
+			if refreshErr != nil && key != nil && c.isStale(lastFetch) {
+				c.refreshMu.Unlock()
+				return nil, fmt.Errorf("%w: last successful refresh %s ago; refresh failed: %w", ErrStaleJWKS, time.Since(lastFetch).Round(time.Second), refreshErr)
+			}
 		}
 		c.refreshMu.Unlock()
-		if key != nil {
-			return key, nil
+	}
+
+	key, lastFetch, _ = c.snapshot(kid)
+	if key != nil {
+		if c.isStale(lastFetch) {
+			return nil, fmt.Errorf("%w: last successful refresh %s ago", ErrStaleJWKS, time.Since(lastFetch).Round(time.Second))
 		}
+		return key, nil
 	}
 
 	return nil, fmt.Errorf("%w: %q", ErrUnknownKID, kid)

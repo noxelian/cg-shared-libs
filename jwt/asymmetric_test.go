@@ -56,7 +56,7 @@ func TestSigner_RS256Roundtrip(t *testing.T) {
 
 	v, err := NewValidator(Config{JWKSURL: srv.URL, AcceptHS256: false, JWKSRefresh: time.Hour, JWKSTimeout: 2 * time.Second})
 	require.NoError(t, err)
-	defer v.Close()
+	t.Cleanup(func() { require.NoError(t, v.Close()) })
 
 	pair, err := s.GenerateTokenPairWithContext(123, "+77001234567", "device-001", AppContext{App: "partner", OrgID: "org-1", OrgRole: "owner"})
 	require.NoError(t, err)
@@ -101,7 +101,7 @@ func TestValidator_RejectsHS256WhenDisabled(t *testing.T) {
 
 	v, err := NewValidator(Config{JWKSURL: srv.URL, AcceptHS256: false, JWKSRefresh: time.Hour, JWKSTimeout: 2 * time.Second})
 	require.NoError(t, err)
-	defer v.Close()
+	t.Cleanup(func() { require.NoError(t, v.Close()) })
 
 	m, err := NewManager(Config{SecretKey: testSecret, AccessTokenTTL: time.Minute, RefreshTokenTTL: time.Hour, Issuer: "test-issuer"})
 	require.NoError(t, err)
@@ -126,7 +126,7 @@ func TestValidator_DualAccept(t *testing.T) {
 
 	v, err := NewValidator(Config{JWKSURL: srv.URL, AcceptHS256: true, SecretKey: testSecret, JWKSRefresh: time.Hour, JWKSTimeout: 2 * time.Second})
 	require.NoError(t, err)
-	defer v.Close()
+	t.Cleanup(func() { require.NoError(t, v.Close()) })
 
 	m, err := NewManager(Config{SecretKey: testSecret, AccessTokenTTL: time.Minute, RefreshTokenTTL: time.Hour, Issuer: "test-issuer"})
 	require.NoError(t, err)
@@ -155,7 +155,7 @@ func TestValidator_AlgorithmConfusionBlocked(t *testing.T) {
 
 	v, err := NewValidator(Config{JWKSURL: srv.URL, AcceptHS256: true, SecretKey: testSecret, JWKSRefresh: time.Hour, JWKSTimeout: 2 * time.Second})
 	require.NoError(t, err)
-	defer v.Close()
+	t.Cleanup(func() { require.NoError(t, v.Close()) })
 
 	pubDER, err := x509.MarshalPKIXPublicKey(s.PublicKey())
 	require.NoError(t, err)
@@ -178,7 +178,7 @@ func TestNewValidator_DegradedWhenJWKSDownButHS256On(t *testing.T) {
 	// Unreachable JWKS but HS256 still accepted -> construction succeeds (degraded).
 	v, err := NewValidator(Config{JWKSURL: "http://127.0.0.1:1/jwks", AcceptHS256: true, SecretKey: testSecret, JWKSRefresh: time.Hour, JWKSTimeout: 200 * time.Millisecond})
 	require.NoError(t, err)
-	defer v.Close()
+	t.Cleanup(func() { require.NoError(t, v.Close()) })
 
 	m, err := NewManager(Config{SecretKey: testSecret, AccessTokenTTL: time.Minute, RefreshTokenTTL: time.Hour, Issuer: "i"})
 	require.NoError(t, err)
@@ -274,6 +274,30 @@ func TestJWKSCache_LastKnownGoodOnRefreshFailure(t *testing.T) {
 	pk, err := c.publicKey("kid-1")
 	require.NoError(t, err)
 	require.NotNil(t, pk)
+}
+
+func TestJWKSCache_FailsClosedBeyondMaxStale(t *testing.T) {
+	s := newTestSigner(t, "kid-1")
+	fail := false
+	fetch := func(_ context.Context) ([]byte, error) {
+		if fail {
+			return nil, assertErr{}
+		}
+		return s.JWKSJSON()
+	}
+	maxStale := time.Hour
+	c := newJWKSCacheWithFetcherMaxStale(fetch, time.Hour, time.Second, maxStale)
+	require.NoError(t, c.start(context.Background()))
+	defer c.Close()
+
+	fail = true
+	c.mu.Lock()
+	c.lastFetch = time.Now().Add(-2 * maxStale)
+	c.lastAttempt = time.Now().Add(-2 * minRefetchInterval)
+	c.mu.Unlock()
+
+	_, err := c.publicKey("kid-1")
+	require.ErrorIs(t, err, ErrStaleJWKS)
 }
 
 type assertErr struct{}

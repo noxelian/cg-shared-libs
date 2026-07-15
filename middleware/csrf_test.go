@@ -25,7 +25,9 @@ func setupCSRFTestRedis(t *testing.T) (store *RedisCSRFStore, cleanup func()) {
 	store = NewRedisCSRFStore(client)
 
 	cleanup = func() {
-		client.Close()
+		if err := client.Close(); err != nil {
+			t.Errorf("close Redis client: %v", err)
+		}
 		mr.Close()
 	}
 
@@ -734,11 +736,18 @@ func BenchmarkGenerateCSRFToken(b *testing.B) {
 
 // BenchmarkCSRFMiddleware measures middleware performance
 func BenchmarkCSRFMiddleware(b *testing.B) {
-	mr, _ := miniredis.Run()
+	mr, err := miniredis.Run()
+	if err != nil {
+		b.Fatalf("start miniredis: %v", err)
+	}
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() {
+		if err := client.Close(); err != nil {
+			b.Errorf("close Redis client: %v", err)
+		}
+	}()
 
 	store := NewRedisCSRFStore(client)
 	cfg := DefaultCSRFConfig()

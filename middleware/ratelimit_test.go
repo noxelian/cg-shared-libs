@@ -28,7 +28,9 @@ func setupTestRedisClient(t *testing.T) (client *redis.Client, cleanup func()) {
 	})
 
 	cleanup = func() {
-		client.Close()
+		if err := client.Close(); err != nil {
+			t.Errorf("close Redis client: %v", err)
+		}
 		mr.Close()
 	}
 
@@ -467,11 +469,18 @@ func TestHTTPRateLimitMiddleware(t *testing.T) {
 
 // BenchmarkRateLimitMiddleware measures rate limiting performance
 func BenchmarkRateLimitMiddleware(b *testing.B) {
-	mr, _ := miniredis.Run()
+	mr, err := miniredis.Run()
+	if err != nil {
+		b.Fatalf("start miniredis: %v", err)
+	}
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() {
+		if err := client.Close(); err != nil {
+			b.Errorf("close Redis client: %v", err)
+		}
+	}()
 
 	configs := map[string]ratelimit.Config{
 		"api": {Limit: 1000000, Window: time.Minute}, // High limit to avoid blocking

@@ -5,9 +5,20 @@ import (
 	"testing"
 	"time"
 
+	sharedconfig "github.com/4ubak/cg-shared-libs/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestConfig_SecureJWTDefaults(t *testing.T) {
+	t.Setenv("JWT_ACCEPT_HS256", "")
+	t.Setenv("JWT_JWKS_MAX_STALE", "")
+
+	cfg, err := sharedconfig.Load[Config]("")
+	require.NoError(t, err)
+	assert.False(t, cfg.AcceptHS256)
+	assert.Equal(t, defaultJWKSMaxStale, cfg.JWKSMaxStale)
+}
 
 // TestNewVerifier_PicksImplFromConfig confirms the config-driven constructor
 // returns *Validator when a JWKS URL is set and *Manager otherwise — the lever
@@ -19,7 +30,7 @@ func TestNewVerifier_PicksImplFromConfig(t *testing.T) {
 
 	v, err := NewVerifier(Config{JWKSURL: srv.URL, AcceptHS256: false, JWKSTimeout: 2 * time.Second})
 	require.NoError(t, err)
-	defer v.Close()
+	t.Cleanup(func() { require.NoError(t, v.Close()) })
 	_, isValidator := v.(*Validator)
 	assert.True(t, isValidator, "JWKSURL set must yield a *Validator")
 	at, _, err := s.GenerateAccessToken(1, "+7", "d")
@@ -29,7 +40,7 @@ func TestNewVerifier_PicksImplFromConfig(t *testing.T) {
 
 	m, err := NewVerifier(Config{SecretKey: testSecret, AcceptHS256: true, AccessTokenTTL: time.Minute, RefreshTokenTTL: time.Hour, Issuer: "i"})
 	require.NoError(t, err)
-	defer m.Close()
+	t.Cleanup(func() { require.NoError(t, m.Close()) })
 	_, isManager := m.(*Manager)
 	assert.True(t, isManager, "no JWKSURL must yield a legacy *Manager")
 }
@@ -52,19 +63,19 @@ func TestValidator_ExpectedIssuer(t *testing.T) {
 
 	vOK, err := NewValidator(Config{JWKSURL: srv.URL, ExpectedIssuer: "test-issuer", JWKSTimeout: 2 * time.Second})
 	require.NoError(t, err)
-	defer vOK.Close()
+	t.Cleanup(func() { require.NoError(t, vOK.Close()) })
 	_, err = vOK.ValidateAccessToken(at)
 	require.NoError(t, err, "matching issuer must pass")
 
 	vBad, err := NewValidator(Config{JWKSURL: srv.URL, ExpectedIssuer: "someone-else", JWKSTimeout: 2 * time.Second})
 	require.NoError(t, err)
-	defer vBad.Close()
+	t.Cleanup(func() { require.NoError(t, vBad.Close()) })
 	_, err = vBad.ValidateAccessToken(at)
 	assert.Error(t, err, "mismatched issuer must be rejected")
 
 	vNone, err := NewValidator(Config{JWKSURL: srv.URL, JWKSTimeout: 2 * time.Second})
 	require.NoError(t, err)
-	defer vNone.Close()
+	t.Cleanup(func() { require.NoError(t, vNone.Close()) })
 	_, err = vNone.ValidateAccessToken(at)
 	require.NoError(t, err, "empty ExpectedIssuer must NOT enforce iss (dual-accept safety)")
 }

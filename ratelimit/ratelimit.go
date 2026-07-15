@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/4ubak/cg-shared-libs/logger"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -30,6 +31,24 @@ type Limiter struct {
 	client *redis.Client
 	config Config
 	prefix string
+}
+
+// memberSequence distinguishes AllowN batches even when the platform clock
+// returns the same nanosecond for multiple calls. It is process-wide so
+// separate Limiter instances cannot overwrite each other's Redis members.
+var memberSequence atomic.Uint64
+
+func newMembers(now time.Time, n int) []redis.Z {
+	batchID := memberSequence.Add(1)
+	nowNanos := now.UnixNano()
+	members := make([]redis.Z, n)
+	for i := range n {
+		members[i] = redis.Z{
+			Score:  float64(nowNanos + int64(i)),
+			Member: fmt.Sprintf("%d-%d-%d", nowNanos, batchID, i),
+		}
+	}
+	return members
 }
 
 // New creates a new rate limiter
@@ -118,13 +137,7 @@ func (l *Limiter) allowN(ctx context.Context, key string, n int) (Result, error)
 	countCmd := pipe.ZCard(ctx, fullKey)
 
 	// Add new request(s)
-	members := make([]redis.Z, n)
-	for i := 0; i < n; i++ {
-		members[i] = redis.Z{
-			Score:  float64(now.UnixNano() + int64(i)),
-			Member: fmt.Sprintf("%d-%d", now.UnixNano(), i),
-		}
-	}
+	members := newMembers(now, n)
 	pipe.ZAdd(ctx, fullKey, members...)
 
 	// Set expiration on the key
@@ -152,10 +165,15 @@ func (l *Limiter) allowN(ctx context.Context, key string, n int) (Result, error)
 	if !allowed {
 		// Remove the requests we just added since they're not allowed
 		rollbackPipe := l.client.TxPipeline()
-		for i := 0; i < n; i++ {
-			rollbackPipe.ZRem(ctx, fullKey, fmt.Sprintf("%d-%d", now.UnixNano(), i))
+		for _, member := range members {
+			rollbackPipe.ZRem(ctx, fullKey, member.Member)
 		}
-		_, _ = rollbackPipe.Exec(ctx)
+		if _, rollbackErr := rollbackPipe.Exec(ctx); rollbackErr != nil {
+			logger.Warn("rate limit rollback failed",
+				zap.String("key", key),
+				zap.Error(rollbackErr),
+			)
+		}
 
 		logger.Debug("rate limit exceeded",
 			zap.String("key", key),

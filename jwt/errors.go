@@ -16,4 +16,7 @@ var (
 	// ErrUnknownKID is returned when a token references a key id absent from the
 	// JWKS (after a rate-limited refresh attempt).
 	ErrUnknownKID = errors.New("jwt: unknown key id")
+	// ErrStaleJWKS is returned when the cached JWKS has exceeded its configured
+	// maximum staleness and a fresh key set cannot be obtained.
+	ErrStaleJWKS = errors.New("jwt: JWKS cache is stale")
 )
