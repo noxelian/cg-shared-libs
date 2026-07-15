@@ -27,7 +27,7 @@ const maxBodySize = 5 << 20 // 5 MiB
 // HMAC-SHA256 hex-encoded signature of the raw request body against a shared
 // secret loaded from the environment variable named secretEnvKey.
 //
-// Behaviour:
+// Behavior:
 //   - reads up to maxBodySize bytes via io.LimitReader; oversized bodies → 413
 //     {"error":"payload too large"}
 //   - restores the body via io.NopCloser(bytes.NewReader(body)) so downstream

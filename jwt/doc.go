@@ -8,6 +8,7 @@
 //	NewValidator — RS256 verification via JWKS, with optional HS256 dual-accept.
 //	NewVerifier  — returns Manager or Validator from config; use this in every
 //	               verifying service so Phase 3→4→7 are config flips, not code.
+//	               Legacy local HS256 requires AcceptHS256=true explicitly.
 //
 // Migration gates live in Config:
 //   - verify side:  JWKSURL, AcceptHS256, ExpectedIssuer (enable iss-check only
@@ -15,4 +16,6 @@
 //   - issuer side:  PrivateKeyPEM, SigningKeyID, SignWithRS256.
 //
 // Verifiers own a background JWKS refresher, so always `defer v.Close()`.
+// PlatformRoles are signed into access tokens only; refresh paths must resolve
+// current roles before minting a privileged replacement access token.
 package jwt

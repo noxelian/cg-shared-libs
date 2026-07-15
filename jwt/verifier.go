@@ -1,6 +1,9 @@
 package jwt
 
-import "io"
+import (
+	"errors"
+	"io"
+)
 
 // Verifier is the read-only token surface every non-issuer service needs.
 //
@@ -25,7 +28,7 @@ var (
 // chosen purely from config so Phases 3→4→7 become env flips, not code changes:
 //
 //   - JWKSURL set               -> *Validator (RS256; +HS256 dual-accept if a secret is present)
-//   - JWKSURL empty, secret set  -> *Manager   (legacy HS256 only)
+//   - JWKSURL empty, AcceptHS256 + secret set -> *Manager (explicit legacy mode)
 //
 // Always pair with `defer v.Close()` — Manager.Close is a no-op, so the same
 // shutdown wiring is correct for both and a service can flip phases without
@@ -33,6 +36,9 @@ var (
 func NewVerifier(cfg Config) (Verifier, error) {
 	if cfg.JWKSURL != "" {
 		return NewValidator(cfg)
+	}
+	if !cfg.AcceptHS256 {
+		return nil, errors.New("jwt: JWKSURL is required when AcceptHS256 is false")
 	}
 	return NewManager(cfg)
 }

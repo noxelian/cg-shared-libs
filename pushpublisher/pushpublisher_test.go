@@ -9,35 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// stubProducer records PublishJSON calls without a real Kafka connection.
-type stubProducer struct {
-	calls []stubCall
-	err   error
-}
-
-type stubCall struct {
-	key  string
-	data []byte
-}
-
-// PublishJSON captures the key and marshalled payload.
-func (s *stubProducer) PublishJSON(_ context.Context, key string, data any) error {
-	if s.err != nil {
-		return s.err
-	}
-	b, _ := json.Marshal(data)
-	s.calls = append(s.calls, stubCall{key: key, data: b})
-	return nil
-}
-
-// publisherWithStub wires a Publisher to the stub without importing kafka.Producer.
-// We test behaviour by calling Publish directly — the stub satisfies the
-// json-serialisation path since Publisher.Publish delegates to producer.PublishJSON.
-//
 // NOTE: because Publisher wraps *kafka.Producer (a concrete type, not an
 // interface), we test the observable contract at the JSON level using a
 // real Publisher with a nil producer (no-op path) plus direct Event
-// marshalling assertions. Integration tests with a real Kafka broker are
+// marshaling assertions. Integration tests with a real Kafka broker are
 // out of scope for unit tests.
 
 func TestPublish_NilProducer_IsNoop(t *testing.T) {
@@ -63,7 +38,7 @@ func TestPublishBatch_NilProducer_IsNoop(t *testing.T) {
 	})
 }
 
-// TestEvent_MarshalTargetApps verifies JSON serialisation of the TargetApps field.
+// TestEvent_MarshalTargetApps verifies JSON serialization of the TargetApps field.
 func TestEvent_MarshalTargetApps(t *testing.T) {
 	tests := []struct {
 		name       string

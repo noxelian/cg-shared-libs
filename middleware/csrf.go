@@ -9,15 +9,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/4ubak/cg-shared-libs/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"github.com/4ubak/cg-shared-libs/logger"
 	"go.uber.org/zap"
 )
 
 const (
 	// CSRFTokenHeader is the header name for CSRF token
-	CSRFTokenHeader = "X-CSRF-Token"
+	// #nosec G101 -- This is a public HTTP header name, not a credential.
+	CSRFTokenHeader = "X-CSRF-Token" //nolint:gosec // Public HTTP header name, not a credential.
 	// CSRFCookieName is the cookie name for double-submit pattern
 	CSRFCookieName = "_csrf"
 	// CSRFTokenLength is the length of CSRF token in bytes (before base64 encoding)
@@ -162,7 +163,7 @@ func CSRFMiddleware(store CSRFStore, cfg CSRFConfig) gin.HandlerFunc {
 		}
 
 		// For state-changing methods, validate the token
-		if !validateCSRFToken(c, store, sessionID, cfg) {
+		if !validateCSRFToken(c, store, sessionID) {
 			logger.Warn("CSRF validation failed",
 				zap.String("path", c.Request.URL.Path),
 				zap.String("method", c.Request.Method),
@@ -190,7 +191,7 @@ func generateCSRFToken() (string, error) {
 }
 
 // validateCSRFToken validates the CSRF token from the request
-func validateCSRFToken(c *gin.Context, store CSRFStore, sessionID string, cfg CSRFConfig) bool {
+func validateCSRFToken(c *gin.Context, store CSRFStore, sessionID string) bool {
 	// Get token from header
 	headerToken := c.GetHeader(CSRFTokenHeader)
 
@@ -458,6 +459,8 @@ func validateHTTPCSRFToken(r *http.Request, store CSRFStore, sessionID string) b
 
 // setCSRFCookie sets the CSRF cookie for http.ResponseWriter
 func setCSRFCookie(w http.ResponseWriter, token string, cfg CSRFConfig) {
+	// #nosec G124 -- Double-submit CSRF cookies must be readable by JavaScript;
+	// Secure and SameSite remain explicit deployment configuration with secure defaults.
 	cookie := &http.Cookie{
 		Name:     CSRFCookieName,
 		Value:    token,

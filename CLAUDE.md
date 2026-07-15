@@ -44,6 +44,7 @@ Packages removed 2026-07-02 as unwired dead code (zero consumers across all `cg-
 - `GOPRIVATE=github.com/4ubak/*` is required in every consumer environment (and CI).
 - **Never put service-specific logic here.** If it belongs to one domain, it lives in that service.
 - `orgs[]` is signed authorization evidence populated only by the issuer. `orgs: []` is authoritative and grants no organization access; an absent/null claim is legacy-only compatibility. Metadata such as `x-org-id` is selection context and must never be promoted into `AuthInfo.OrgIDs` by a verifier.
+- `platform_roles[]` is access-token-only signed authorization evidence. `grpc/adminrbac` ignores raw `x-platform-role` metadata and reads only `AuthInfo.PlatformRoles`. A trusted live-role resolver may enrich an already authenticated context with `grpc.ContextWithPlatformRoles`; refresh flows must re-resolve roles before minting a privileged access token.
 
 ## Critical files / packages
 
@@ -55,6 +56,8 @@ Packages removed 2026-07-02 as unwired dead code (zero consumers across all `cg-
 ## Gotchas
 
 - **`grpc.ClientConfig` has NO `env:` tags on Host/Port.** Consuming services must override manually in their `Load()` using `config.GetEnv()` / `config.GetEnvInt()`. (`postgres.Config` does have env tags and works automatically.)
+- **Unary retries are explicit.** `MaxRetries` alone does not retry any RPC. List idempotent methods in `RetryableMethods` (exact names or `/Service/*`) or deliberately set `RetryAllMethods` only when every call is idempotent. The shared policy retries only `Unavailable`, applies `Timeout` to the total call, and caps jittered backoff with `RetryMaxWaitTime`.
+- **HS256 legacy verification is explicit.** `jwt.NewVerifier` requires `AcceptHS256: true` when `JWKSURL` is empty; `AcceptHS256: false` without JWKS fails startup instead of constructing an HS256 manager.
 - YAML `${VAR:default}` interpolation does **not** work — Go's yaml.Unmarshal treats `${...}` as a literal string. Use `env:` tags instead.
 - Kafka `groupID` lacks a sensible default — set it explicitly or consumers silently misbehave.
 - `kafka.NewProducer` deliberately sets `RequiredAcks=RequireAll`; do not replace it with a raw zero-value `kafka.Writer`, whose default is fire-and-forget and is unsafe for outbox relays.

@@ -80,7 +80,8 @@ func NewServer(cfg ServerConfig, opts ...grpc.ServerOption) (*Server, error) {
 
 	// Keepalive enforcement policy — allow client pings without active streams
 	// and permit more frequent pings (matches client PermitWithoutStream: true)
-	defaultOpts := []grpc.ServerOption{
+	defaultOpts := make([]grpc.ServerOption, 0, 4+len(opts))
+	defaultOpts = append(defaultOpts,
 		grpc.MaxRecvMsgSize(maxRecvMsgSize),
 		grpc.MaxSendMsgSize(maxSendMsgSize),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
@@ -92,13 +93,13 @@ func NewServer(cfg ServerConfig, opts ...grpc.ServerOption) (*Server, error) {
 			loggingInterceptor(),
 			timeoutInterceptor(cfg.Timeout),
 		),
-	}
+	)
 
 	// WARNING: gRPC silently overwrites if multiple ChainUnaryInterceptor
 	// options are provided. Callers that need extra interceptors should use
 	// NewServerWithInterceptors instead.
-	allOpts := append(defaultOpts, opts...)
-	server := grpc.NewServer(allOpts...)
+	defaultOpts = append(defaultOpts, opts...)
+	server := grpc.NewServer(defaultOpts...)
 
 	logger.Info("gRPC server created successfully",
 		zap.String("addr", cfg.Addr()),
@@ -150,11 +151,12 @@ func NewServerWithInterceptors(
 	)
 
 	// Build merged interceptor chain: defaults first, then caller's
-	allUnary := []grpc.UnaryServerInterceptor{
+	allUnary := make([]grpc.UnaryServerInterceptor, 0, 3+len(unaryInterceptors))
+	allUnary = append(allUnary,
 		recoveryInterceptor(),
 		loggingInterceptor(),
 		timeoutInterceptor(cfg.Timeout),
-	}
+	)
 	allUnary = append(allUnary, unaryInterceptors...)
 
 	allOpts := []grpc.ServerOption{
@@ -206,7 +208,7 @@ func (s *Server) Server() *grpc.Server {
 
 // Start starts the gRPC server
 func (s *Server) Start() error {
-	listener, err := net.Listen("tcp", s.config.Addr())
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", s.config.Addr())
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
@@ -410,7 +412,9 @@ type JWTClaims struct {
 	OrgType string
 	CityID  int64
 	OrgRole string
-	OrgIDs  []string
+	// PlatformRoles contains platform-wide roles copied from verified JWT claims.
+	PlatformRoles []string
+	OrgIDs        []string
 }
 
 // AuthContextKey is the key for auth info in context
@@ -429,6 +433,9 @@ type AuthInfo struct {
 	OrgType string
 	CityID  int64
 	OrgRole string
+	// PlatformRoles contains platform-wide roles copied from verified JWT
+	// claims or set by a trusted post-authentication resolver.
+	PlatformRoles []string
 
 	// OrgIDs is the caller's full organization-membership set (Option B).
 	// Empty on legacy single-org tokens; populated from the token's orgs[]
@@ -452,10 +459,27 @@ func MustGetAuthInfo(ctx context.Context) *AuthInfo {
 	return info
 }
 
-// ContextWithAuthInfo returns a new context with AuthInfo set.
-// Intended for use in tests where the auth interceptor is not running.
+// ContextWithAuthInfo returns a new context with AuthInfo set. It is intended
+// for tests and trusted authentication/authorization interceptors; handlers
+// must not promote caller-controlled metadata into AuthInfo.
 func ContextWithAuthInfo(ctx context.Context, info *AuthInfo) context.Context {
 	return context.WithValue(ctx, authContextKey{}, info)
+}
+
+// ContextWithPlatformRoles copies verified platform roles into existing
+// AuthInfo. Trusted post-authentication resolvers may use this when roles are
+// loaded live instead of embedded in the JWT. Without AuthInfo it returns the
+// original context, so this helper can never create an authenticated caller.
+func ContextWithPlatformRoles(ctx context.Context, roles []string) context.Context {
+	info, ok := GetAuthInfo(ctx)
+	if !ok || info == nil {
+		return ctx
+	}
+
+	cloned := *info
+	cloned.PlatformRoles = slices.Clone(roles)
+	cloned.OrgIDs = slices.Clone(info.OrgIDs)
+	return context.WithValue(ctx, authContextKey{}, &cloned)
 }
 
 // AuthInterceptor creates authentication interceptor
@@ -508,15 +532,16 @@ func AuthInterceptor(validator JWTValidator, cfg AuthInterceptorConfig) grpc.Una
 
 		// Add auth info to context
 		authInfo := &AuthInfo{
-			UserID:   claims.UserID,
-			Phone:    claims.Phone,
-			DeviceID: claims.DeviceID,
-			App:      claims.App,
-			OrgID:    claims.OrgID,
-			OrgType:  claims.OrgType,
-			CityID:   claims.CityID,
-			OrgRole:  claims.OrgRole,
-			OrgIDs:   slices.Clone(claims.OrgIDs),
+			UserID:        claims.UserID,
+			Phone:         claims.Phone,
+			DeviceID:      claims.DeviceID,
+			App:           claims.App,
+			OrgID:         claims.OrgID,
+			OrgType:       claims.OrgType,
+			CityID:        claims.CityID,
+			OrgRole:       claims.OrgRole,
+			PlatformRoles: slices.Clone(claims.PlatformRoles),
+			OrgIDs:        slices.Clone(claims.OrgIDs),
 		}
 		ctx = context.WithValue(ctx, authContextKey{}, authInfo)
 

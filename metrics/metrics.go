@@ -86,8 +86,8 @@ func New(serviceName string) *Metrics {
 
 // RecordHTTPRequest records HTTP request metrics
 func (m *Metrics) RecordHTTPRequest(method, endpoint string, statusCode int, duration time.Duration) {
-	status := strconv.Itoa(statusCode)
-	m.httpRequestsTotal.WithLabelValues(m.serviceName, method, endpoint, status).Inc()
+	statusLabel := strconv.Itoa(statusCode)
+	m.httpRequestsTotal.WithLabelValues(m.serviceName, method, endpoint, statusLabel).Inc()
 	m.httpRequestDuration.WithLabelValues(m.serviceName, method, endpoint).Observe(duration.Seconds())
 
 	if statusCode >= 400 {
@@ -100,12 +100,12 @@ func (m *Metrics) RecordHTTPRequest(method, endpoint string, statusCode int, dur
 }
 
 // RecordGRPCRequest records gRPC request metrics
-func (m *Metrics) RecordGRPCRequest(method, status string, duration time.Duration) {
-	m.grpcRequestsTotal.WithLabelValues(m.serviceName, method, status).Inc()
+func (m *Metrics) RecordGRPCRequest(method, statusLabel string, duration time.Duration) {
+	m.grpcRequestsTotal.WithLabelValues(m.serviceName, method, statusLabel).Inc()
 	m.grpcRequestDuration.WithLabelValues(m.serviceName, method).Observe(duration.Seconds())
 
-	if status != "OK" {
-		m.grpcErrorsTotal.WithLabelValues(m.serviceName, method, status).Inc()
+	if statusLabel != "OK" {
+		m.grpcErrorsTotal.WithLabelValues(m.serviceName, method, statusLabel).Inc()
 	}
 }
 
@@ -352,8 +352,8 @@ func SetDBConnections(database string, active, idle int) {
 }
 
 // RecordRedisOperation records a Redis operation
-func RecordRedisOperation(operation, status string) {
-	redisOperationsTotal.WithLabelValues(operation, status).Inc()
+func RecordRedisOperation(operation, statusLabel string) {
+	redisOperationsTotal.WithLabelValues(operation, statusLabel).Inc()
 }
 
 // RecordKafkaMessageProduced records a produced Kafka message

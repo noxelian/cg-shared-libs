@@ -7,9 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/4ubak/cg-shared-libs/logger"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/4ubak/cg-shared-libs/logger"
 	"go.uber.org/zap"
 )
 
@@ -41,8 +41,8 @@ type ReplicaPool struct {
 }
 
 type replicaConn struct {
-	pool *Pool
-	mu   sync.RWMutex
+	pool    *Pool
+	mu      sync.RWMutex
 	healthy bool
 	lag     time.Duration
 }
@@ -216,7 +216,7 @@ func (rp *ReplicaPool) healthChecker(ctx context.Context) {
 func (rp *ReplicaPool) checkReplicasHealth(ctx context.Context) {
 	for i, r := range rp.replicas {
 		// Check connectivity
-		err := r.pool.Pool.Ping(ctx)
+		err := r.pool.Ping(ctx)
 		if err != nil {
 			r.mu.Lock()
 			r.healthy = false
@@ -350,8 +350,8 @@ func (rp *ReplicaPool) WithTx(ctx context.Context, fn func(tx pgx.Tx) error) err
 // ReadAfterWrite returns reader that guarantees consistency after write
 // It uses primary for reads for a short period after writes
 type ReadAfterWrite struct {
-	rp            *ReplicaPool
-	writeTime     time.Time
+	rp                *ReplicaPool
+	writeTime         time.Time
 	consistencyWindow time.Duration
 }
 

@@ -40,14 +40,15 @@ func (a *JWTValidatorAdapter) ValidateAccessToken(token string) (*JWTClaims, err
 		return nil, err
 	}
 	return &JWTClaims{
-		UserID:   claims.UserID,
-		Phone:    claims.Phone,
-		DeviceID: claims.DeviceID,
-		App:      claims.App,
-		OrgID:    claims.OrgID,
-		OrgType:  claims.OrgType,
-		CityID:   claims.CityID,
-		OrgRole:  claims.OrgRole,
-		OrgIDs:   slices.Clone(claims.OrgIDs),
+		UserID:        claims.UserID,
+		Phone:         claims.Phone,
+		DeviceID:      claims.DeviceID,
+		App:           claims.App,
+		OrgID:         claims.OrgID,
+		OrgType:       claims.OrgType,
+		CityID:        claims.CityID,
+		OrgRole:       claims.OrgRole,
+		PlatformRoles: slices.Clone(claims.PlatformRoles),
+		OrgIDs:        slices.Clone(claims.OrgIDs),
 	}, nil
 }

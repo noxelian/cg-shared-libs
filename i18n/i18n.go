@@ -45,7 +45,8 @@ func New() *Translator {
 // LoadDefaults loads default error messages
 func (t *Translator) LoadDefaults() {
 	// Russian (default)
-	t.SetMessages("ru", map[string]string{
+	// #nosec G101 -- These are translation identifiers containing "token", not credentials.
+	t.SetMessages("ru", map[string]string{ //nolint:gosec // Translation identifiers containing "token" are not credentials.
 		// Common errors
 		"internal_error":      "Внутренняя ошибка сервера",
 		"not_found":           "Не найдено",
@@ -109,7 +110,8 @@ func (t *Translator) LoadDefaults() {
 	})
 
 	// Kazakh
-	t.SetMessages("kk", map[string]string{
+	// #nosec G101 -- These are translation identifiers containing "token", not credentials.
+	t.SetMessages("kk", map[string]string{ //nolint:gosec // Translation identifiers containing "token" are not credentials.
 		// Common errors
 		"internal_error":      "Сервердің ішкі қатесі",
 		"not_found":           "Табылмады",

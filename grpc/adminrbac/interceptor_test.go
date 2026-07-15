@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	sharedGRPC "github.com/4ubak/cg-shared-libs/grpc"
 	"github.com/4ubak/cg-shared-libs/grpc/adminrbac"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,20 +17,24 @@ import (
 const adminMethod = "/users.AdminUserService/AdminListCars"
 const publicMethod = "/users.UserService/GetProfile"
 
-func newInterceptor(extraRoles ...string) grpc.UnaryServerInterceptor {
+func newInterceptor() grpc.UnaryServerInterceptor {
 	cfg := adminrbac.Config{
 		AdminMethods: []string{
 			adminMethod,
 			"/chat.AdminChatService/*",
 		},
 	}
-	if len(extraRoles) > 0 {
-		cfg.AllowedRoles = extraRoles
-	}
 	return adminrbac.NewInterceptor(cfg).Unary()
 }
 
-func ctxWithRole(roles ...string) context.Context {
+func ctxWithVerifiedRoles(roles ...string) context.Context {
+	return sharedGRPC.ContextWithAuthInfo(context.Background(), &sharedGRPC.AuthInfo{
+		UserID:        42,
+		PlatformRoles: roles,
+	})
+}
+
+func ctxWithRawRoles(roles ...string) context.Context {
 	pairs := make([]string, 0, len(roles)*2)
 	for _, r := range roles {
 		pairs = append(pairs, "x-platform-role", r)
@@ -38,25 +43,25 @@ func ctxWithRole(roles ...string) context.Context {
 	return metadata.NewIncomingContext(context.Background(), md)
 }
 
-func noopHandler(_ context.Context, req any) (any, error) {
+func noopHandler(_ context.Context, req any) (any, error) { //nolint:revive // gRPC requires context as the first argument.
 	return "ok", nil
 }
 
-func runInterceptor(interceptor grpc.UnaryServerInterceptor, ctx context.Context, method string) (any, error) {
+func runInterceptor(interceptor grpc.UnaryServerInterceptor, ctx context.Context, method string) (any, error) { //nolint:revive // Test helper mirrors interceptor argument order.
 	info := &grpc.UnaryServerInfo{FullMethod: method}
 	return interceptor(ctx, nil, info, noopHandler)
 }
 
 func TestAdminRBAC_ValidAdminRole_Passes(t *testing.T) {
 	interceptor := newInterceptor()
-	resp, err := runInterceptor(interceptor, ctxWithRole("admin"), adminMethod)
+	resp, err := runInterceptor(interceptor, ctxWithVerifiedRoles("admin"), adminMethod)
 	require.NoError(t, err)
 	assert.Equal(t, "ok", resp)
 }
 
 func TestAdminRBAC_ValidSupportRole_Passes(t *testing.T) {
 	interceptor := newInterceptor()
-	resp, err := runInterceptor(interceptor, ctxWithRole("support"), adminMethod)
+	resp, err := runInterceptor(interceptor, ctxWithVerifiedRoles("support"), adminMethod)
 	require.NoError(t, err)
 	assert.Equal(t, "ok", resp)
 }
@@ -75,31 +80,37 @@ func TestAdminRBAC_NoRoleOnAdminMethod_Unauthenticated(t *testing.T) {
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 }
 
+func TestAdminRBAC_AuthenticatedWithoutRole_PermissionDenied(t *testing.T) {
+	interceptor := newInterceptor()
+	_, err := runInterceptor(interceptor, ctxWithVerifiedRoles(), adminMethod)
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
 func TestAdminRBAC_UserRole_PermissionDenied(t *testing.T) {
 	interceptor := newInterceptor()
-	_, err := runInterceptor(interceptor, ctxWithRole("mechanic"), adminMethod)
+	_, err := runInterceptor(interceptor, ctxWithVerifiedRoles("mechanic"), adminMethod)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 func TestAdminRBAC_ServiceTokenRole_PermissionDenied(t *testing.T) {
-	// Service tokens carry no x-platform-role header — they get Unauthenticated.
 	interceptor := newInterceptor()
-	_, err := runInterceptor(interceptor, ctxWithRole("receptionist"), adminMethod)
+	_, err := runInterceptor(interceptor, ctxWithVerifiedRoles("receptionist"), adminMethod)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 func TestAdminRBAC_WildcardMethod_Passes(t *testing.T) {
 	interceptor := newInterceptor()
-	resp, err := runInterceptor(interceptor, ctxWithRole("admin"), "/chat.AdminChatService/AdminGetUserChats")
+	resp, err := runInterceptor(interceptor, ctxWithVerifiedRoles("admin"), "/chat.AdminChatService/AdminGetUserChats")
 	require.NoError(t, err)
 	assert.Equal(t, "ok", resp)
 }
 
 func TestAdminRBAC_WildcardMethod_UserRole_PermissionDenied(t *testing.T) {
 	interceptor := newInterceptor()
-	_, err := runInterceptor(interceptor, ctxWithRole("mechanic"), "/chat.AdminChatService/AdminGetUserChats")
+	_, err := runInterceptor(interceptor, ctxWithVerifiedRoles("mechanic"), "/chat.AdminChatService/AdminGetUserChats")
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
@@ -116,19 +127,19 @@ func TestAdminRBAC_TableDriven(t *testing.T) {
 	}{
 		{
 			name:   "admin on exact method",
-			ctx:    ctxWithRole("admin"),
+			ctx:    ctxWithVerifiedRoles("admin"),
 			method: adminMethod,
 			wantOK: true,
 		},
 		{
 			name:   "support on exact method",
-			ctx:    ctxWithRole("support"),
+			ctx:    ctxWithVerifiedRoles("support"),
 			method: adminMethod,
 			wantOK: true,
 		},
 		{
 			name:   "admin on wildcard method",
-			ctx:    ctxWithRole("admin"),
+			ctx:    ctxWithVerifiedRoles("admin"),
 			method: "/chat.AdminChatService/AdminGetChatMessages",
 			wantOK: true,
 		},
@@ -146,13 +157,13 @@ func TestAdminRBAC_TableDriven(t *testing.T) {
 		},
 		{
 			name:     "wrong role on admin method",
-			ctx:      ctxWithRole("sales_manager"),
+			ctx:      ctxWithVerifiedRoles("sales_manager"),
 			method:   adminMethod,
 			wantCode: codes.PermissionDenied,
 		},
 		{
 			name:     "wrong role on wildcard method",
-			ctx:      ctxWithRole("parts_manager"),
+			ctx:      ctxWithVerifiedRoles("parts_manager"),
 			method:   "/chat.AdminChatService/AdminGetUserChats",
 			wantCode: codes.PermissionDenied,
 		},
@@ -193,7 +204,7 @@ func TestIsPlatformAdmin(t *testing.T) {
 			if tc.roles == nil {
 				ctx = context.Background()
 			} else {
-				ctx = ctxWithRole(tc.roles...)
+				ctx = ctxWithVerifiedRoles(tc.roles...)
 			}
 			assert.Equal(t, tc.want, adminrbac.IsPlatformAdmin(ctx))
 		})
@@ -209,14 +220,36 @@ func TestAdminRBAC_CustomAllowedRoles(t *testing.T) {
 	interceptor := adminrbac.NewInterceptor(cfg).Unary()
 
 	t.Run("custom role passes", func(t *testing.T) {
-		resp, err := runInterceptor(interceptor, ctxWithRole("platform_admin"), adminMethod)
+		resp, err := runInterceptor(interceptor, ctxWithVerifiedRoles("platform_admin"), adminMethod)
 		require.NoError(t, err)
 		assert.Equal(t, "ok", resp)
 	})
 
 	t.Run("default admin denied with custom config", func(t *testing.T) {
-		_, err := runInterceptor(interceptor, ctxWithRole("admin"), adminMethod)
+		_, err := runInterceptor(interceptor, ctxWithVerifiedRoles("admin"), adminMethod)
 		require.Error(t, err)
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	})
+}
+
+func TestAdminRBAC_RawPlatformRoleMetadataNeverAuthorizes(t *testing.T) {
+	interceptor := newInterceptor()
+
+	t.Run("unauthenticated spoof", func(t *testing.T) {
+		_, err := runInterceptor(interceptor, ctxWithRawRoles("admin"), adminMethod)
+		require.Error(t, err)
+		assert.Equal(t, codes.Unauthenticated, status.Code(err))
+	})
+
+	t.Run("authenticated non-admin spoof", func(t *testing.T) {
+		ctx := ctxWithVerifiedRoles("mechanic")
+		ctx = metadata.NewIncomingContext(ctx, metadata.Pairs("x-platform-role", "admin"))
+		_, err := runInterceptor(interceptor, ctx, adminMethod)
+		require.Error(t, err)
+		assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	})
+
+	t.Run("helper ignores spoof", func(t *testing.T) {
+		assert.False(t, adminrbac.IsPlatformAdmin(ctxWithRawRoles("admin")))
 	})
 }

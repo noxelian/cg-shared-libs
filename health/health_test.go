@@ -9,11 +9,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/4ubak/cg-shared-libs/health"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/4ubak/cg-shared-libs/health"
 )
 
 // testChecker implements health.Checker for testing
@@ -23,7 +23,7 @@ type testChecker struct {
 }
 
 func (c *testChecker) Check(_ context.Context) error { return c.err }
-func (c *testChecker) Name() string                   { return c.name }
+func (c *testChecker) Name() string                  { return c.name }
 
 func TestNew_ReturnsNonNil(t *testing.T) {
 	h := health.New("v1.0.0")
@@ -35,7 +35,7 @@ func TestHandler_NoCheckers_ReturnsOK(t *testing.T) {
 	handler := h.Handler()
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", http.NoBody)
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -53,7 +53,7 @@ func TestHandler_AllCheckersPass_ReturnsOK(t *testing.T) {
 	h.RegisterChecker(&testChecker{name: "redis", err: nil})
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", http.NoBody)
 	h.Handler().ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -73,7 +73,7 @@ func TestHandler_OneCheckerFails_ReturnsDegraded(t *testing.T) {
 	h.RegisterChecker(&testChecker{name: "redis", err: errors.New("connection refused")})
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", http.NoBody)
 	h.Handler().ServeHTTP(rr, req)
 
 	// Degraded still returns 200
@@ -96,7 +96,7 @@ func TestHandler_AllCheckersFail_ReturnsDegraded(t *testing.T) {
 	h.RegisterChecker(&testChecker{name: "redis", err: errors.New("redis down")})
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", http.NoBody)
 	h.Handler().ServeHTTP(rr, req)
 
 	var resp health.Response
@@ -113,7 +113,7 @@ func TestRegister_CheckerNameAppears(t *testing.T) {
 	h.RegisterChecker(&testChecker{name: "custom-checker", err: nil})
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", http.NoBody)
 	h.Handler().ServeHTTP(rr, req)
 
 	var resp health.Response
@@ -128,7 +128,7 @@ func TestRegister_CheckerNameAppears(t *testing.T) {
 func TestHandler_ResponseIsJSON(t *testing.T) {
 	h := health.New("v1.0.0")
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", http.NoBody)
 	h.Handler().ServeHTTP(rr, req)
 
 	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -137,7 +137,7 @@ func TestHandler_ResponseIsJSON(t *testing.T) {
 func TestHandler_ResponseContainsUptime(t *testing.T) {
 	h := health.New("v1.0.0")
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", http.NoBody)
 	h.Handler().ServeHTTP(rr, req)
 
 	var resp health.Response
@@ -160,7 +160,7 @@ func TestCheck_DirectCall(t *testing.T) {
 func TestSimpleHandler_ReturnsOK(t *testing.T) {
 	handler := health.SimpleHandler()
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", http.NoBody)
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -176,7 +176,7 @@ func TestReadinessHandler_AllPass_ReturnsOK(t *testing.T) {
 	h.RegisterChecker(&testChecker{name: "db", err: nil})
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/readiness", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readiness", http.NoBody)
 	h.ReadinessHandler().ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -192,7 +192,7 @@ func TestReadinessHandler_CheckFails_ReturnsServiceUnavailable(t *testing.T) {
 	h.RegisterChecker(&testChecker{name: "db", err: errors.New("connection lost")})
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/readiness", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readiness", http.NoBody)
 	h.ReadinessHandler().ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
@@ -239,7 +239,7 @@ func TestCustomChecker_IntegrationWithHealth(t *testing.T) {
 	h.RegisterChecker(failChecker)
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", http.NoBody)
 	h.Handler().ServeHTTP(rr, req)
 
 	var resp health.Response
@@ -265,7 +265,7 @@ func TestReadinessHandler_NoCheckers_ReturnsOK(t *testing.T) {
 	h := health.New("v1.0.0")
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/readiness", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readiness", http.NoBody)
 	h.ReadinessHandler().ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -279,7 +279,7 @@ func TestReadinessHandler_NoCheckers_ReturnsOK(t *testing.T) {
 func TestSimpleHandler_ResponseIsJSON(t *testing.T) {
 	handler := health.SimpleHandler()
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", http.NoBody)
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -322,7 +322,7 @@ func TestReadinessHandler_MultipleCheckers_OneFailsReturnUnavailable(t *testing.
 	h.RegisterChecker(&testChecker{name: "cache", err: errors.New("cache down")})
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/readiness", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readiness", http.NoBody)
 	h.ReadinessHandler().ServeHTTP(rr, req)
 
 	// Readiness requires ALL checks to pass
@@ -337,7 +337,7 @@ func TestLivenessHandler_ReturnsOK_Always(t *testing.T) {
 	h.RegisterChecker(&testChecker{name: "db", err: errors.New("db down")})
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", http.NoBody)
 	h.LivenessHandler().ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -354,7 +354,7 @@ func TestLivenessHandler_ResponseContainsUptimeAndVersion(t *testing.T) {
 	h := health.New("v1.24.0")
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", http.NoBody)
 	h.LivenessHandler().ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -371,7 +371,7 @@ func TestLivenessHandler_ResponseContainsUptimeAndVersion(t *testing.T) {
 
 func TestKafkaChecker_ReachableBroker_ReturnsNil(t *testing.T) {
 	// Start a real TCP listener on a random port
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer ln.Close()
 

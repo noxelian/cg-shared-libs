@@ -2,15 +2,18 @@ package grpc
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"fmt"
+	"math/big"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/4ubak/cg-shared-libs/circuitbreaker"
 	"github.com/4ubak/cg-shared-libs/logger"
 	"github.com/4ubak/cg-shared-libs/tracing"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -61,11 +64,20 @@ func isRunningInLinkerd() bool {
 //   - DNS refresh depends on CoreDNS TTL (default 30s in K8s)
 //   - For instant failover, use service mesh (Istio/Linkerd)
 type ClientConfig struct {
-	Host              string        `yaml:"host"`
-	Port              int           `yaml:"port"`
-	Timeout           time.Duration `yaml:"timeout" env-default:"5s"`
-	MaxRetries        int           `yaml:"max_retries" env-default:"3"`
-	RetryWaitTime     time.Duration `yaml:"retry_wait_time" env-default:"100ms"`
+	Host          string        `yaml:"host"`
+	Port          int           `yaml:"port"`
+	Timeout       time.Duration `yaml:"timeout" env-default:"5s"`
+	MaxRetries    int           `yaml:"max_retries" env-default:"3"`
+	RetryWaitTime time.Duration `yaml:"retry_wait_time" env-default:"100ms"`
+	// RetryMaxWaitTime caps exponential backoff before equal jitter is applied.
+	// Defaults to 2s when RetryWaitTime is set and this field is zero.
+	RetryMaxWaitTime time.Duration `yaml:"retry_max_wait_time" env-default:"2s"`
+	// RetryableMethods explicitly lists idempotent unary RPCs that may be
+	// retried on Unavailable. Entries support a trailing "/*" service wildcard.
+	RetryableMethods []string `yaml:"retryable_methods"`
+	// RetryAllMethods opts every unary RPC into retries. Enable this only when
+	// every target method is idempotent (for example via request idempotency keys).
+	RetryAllMethods   bool          `yaml:"retry_all_methods" env-default:"false"`
 	MaxRecvMsgSize    int           `yaml:"max_recv_msg_size" env-default:"4194304"`
 	MaxSendMsgSize    int           `yaml:"max_send_msg_size" env-default:"4194304"`
 	KeepAliveTime     time.Duration `yaml:"keep_alive_time" env-default:"30s"`
@@ -206,7 +218,7 @@ func NewClient(ctx context.Context, cfg ClientConfig, opts ...grpc.DialOption) (
 		grpc.WithChainUnaryInterceptor(
 			clientLoggingInterceptor(),
 			circuitBreakerInterceptor(), // Circuit breaker for high availability
-			retryInterceptor(cfg.MaxRetries, cfg.RetryWaitTime),
+			retryInterceptor(cfg),
 		),
 	}
 
@@ -218,9 +230,10 @@ func NewClient(ctx context.Context, cfg ClientConfig, opts ...grpc.DialOption) (
 	// Add OpenTelemetry tracing interceptors for distributed tracing
 	defaultOpts = append(defaultOpts, tracing.GRPCClientInterceptors()...)
 
-	allOpts := append(defaultOpts, opts...)
+	defaultOpts = append(defaultOpts, opts...)
 
-	conn, err := grpc.DialContext(ctx, cfg.Target(), allOpts...)
+	// DialContext preserves the existing caller-controlled dial lifecycle.
+	conn, err := grpc.DialContext(ctx, cfg.Target(), defaultOpts...) //nolint:staticcheck // grpc.NewClient does not accept a dial context.
 	if err != nil {
 		logger.Error("failed to dial gRPC server",
 			zap.String("target", cfg.Target()),
@@ -273,22 +286,23 @@ func clientLoggingInterceptor() grpc.UnaryClientInterceptor {
 
 		// Extract request ID from context
 		requestID := GetRequestIDFromContext(ctx)
-		
+
 		// Add request ID to outgoing metadata if not present
 		md, ok := metadata.FromOutgoingContext(ctx)
 		if !ok {
 			md = metadata.New(nil)
 		}
-		
+
 		// Check if request ID already exists in metadata
 		existingVals := md.Get("x-request-id")
-		if len(existingVals) > 0 {
+		switch {
+		case len(existingVals) > 0:
 			requestID = existingVals[0]
-		} else if requestID != "" {
+		case requestID != "":
 			// Use extracted request ID
 			md.Set("x-request-id", requestID)
 			ctx = metadata.NewOutgoingContext(ctx, md)
-		} else {
+		default:
 			// Generate new request ID if not found
 			requestID = generateClientRequestID()
 			md.Set("x-request-id", requestID)
@@ -351,7 +365,7 @@ func GetRequestIDFromContext(ctx context.Context) string {
 			return vals[0]
 		}
 	}
-	
+
 	// Note: logger.WithRequestID stores request_id in logger fields,
 	// but we can't easily extract it. The request_id should be passed
 	// via metadata from the caller (BFF middleware does this via context)
@@ -363,7 +377,9 @@ func generateClientRequestID() string {
 	return uuid.New().String()
 }
 
-func retryInterceptor(maxRetries int, waitTime time.Duration) grpc.UnaryClientInterceptor {
+const defaultRetryMaxWaitTime = 2 * time.Second
+
+func retryInterceptor(cfg ClientConfig) grpc.UnaryClientInterceptor {
 	return func(
 		ctx context.Context,
 		method string,
@@ -372,6 +388,18 @@ func retryInterceptor(maxRetries int, waitTime time.Duration) grpc.UnaryClientIn
 		invoker grpc.UnaryInvoker,
 		opts ...grpc.CallOption,
 	) error {
+		callCtx := ctx
+		if cfg.Timeout > 0 {
+			var cancel context.CancelFunc
+			callCtx, cancel = context.WithTimeout(ctx, cfg.Timeout)
+			defer cancel()
+		}
+
+		maxRetries := cfg.MaxRetries
+		if maxRetries < 0 || !methodAllowsRetry(method, cfg) {
+			maxRetries = 0
+		}
+
 		var lastErr error
 
 		for i := 0; i <= maxRetries; i++ {
@@ -382,7 +410,7 @@ func retryInterceptor(maxRetries int, waitTime time.Duration) grpc.UnaryClientIn
 				zap.Int("max_retries", maxRetries),
 			)
 
-			err := invoker(ctx, method, req, reply, cc, opts...)
+			err := invoker(callCtx, method, req, reply, cc, opts...)
 			if err == nil {
 				if attempt > 1 {
 					logger.Info("gRPC client call succeeded after retry",
@@ -400,7 +428,7 @@ func retryInterceptor(maxRetries int, waitTime time.Duration) grpc.UnaryClientIn
 				zap.String("method", method),
 				zap.Int("attempt", attempt),
 				zap.String("code", code.String()),
-				zap.Bool("retryable", isRetryable(code)),
+				zap.Bool("retryable", isRetryable(code) && maxRetries > 0),
 				zap.Error(err),
 			)
 
@@ -414,19 +442,19 @@ func retryInterceptor(maxRetries int, waitTime time.Duration) grpc.UnaryClientIn
 			}
 
 			if i < maxRetries {
-				waitDuration := waitTime * time.Duration(i+1)
+				waitDuration := boundedRetryDelay(cfg.RetryWaitTime, cfg.RetryMaxWaitTime, i+1)
 				logger.Debug("waiting before retry",
 					zap.String("method", method),
 					zap.Int("next_attempt", attempt+1),
 					zap.Duration("wait_time", waitDuration),
 				)
 				select {
-				case <-ctx.Done():
+				case <-callCtx.Done():
 					logger.Warn("context cancelled during retry wait",
 						zap.String("method", method),
-						zap.Error(ctx.Err()),
+						zap.Error(callCtx.Err()),
 					)
-					return ctx.Err()
+					return status.FromContextError(callCtx.Err()).Err()
 				case <-time.After(waitDuration):
 					logger.Debug("retrying gRPC call",
 						zap.String("method", method),
@@ -447,12 +475,57 @@ func retryInterceptor(maxRetries int, waitTime time.Duration) grpc.UnaryClientIn
 }
 
 func isRetryable(code codes.Code) bool {
-	switch code {
-	case codes.Unavailable, codes.ResourceExhausted, codes.Aborted, codes.Internal:
+	return code == codes.Unavailable
+}
+
+func methodAllowsRetry(method string, cfg ClientConfig) bool {
+	if cfg.RetryAllMethods {
 		return true
-	default:
-		return false
 	}
+	for _, configured := range cfg.RetryableMethods {
+		if configured == method {
+			return true
+		}
+		if strings.HasSuffix(configured, "/*") {
+			prefix := strings.TrimSuffix(configured, "/*")
+			if strings.HasPrefix(method, prefix+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func boundedRetryDelay(base, maximum time.Duration, attempt int) time.Duration {
+	if base <= 0 {
+		return 0
+	}
+	if maximum <= 0 {
+		maximum = defaultRetryMaxWaitTime
+	}
+
+	ceiling := base
+	for i := 1; i < attempt && ceiling < maximum; i++ {
+		if ceiling > maximum/2 {
+			ceiling = maximum
+			break
+		}
+		ceiling *= 2
+	}
+	if ceiling > maximum {
+		ceiling = maximum
+	}
+
+	floor := ceiling / 2
+	span := ceiling - floor
+	if span <= 0 {
+		return ceiling
+	}
+	random, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(span)+1))
+	if err != nil {
+		return floor + span/2
+	}
+	return floor + time.Duration(random.Int64())
 }
 
 // Circuit Breaker Registry - manages circuit breakers per target
@@ -544,7 +617,9 @@ func NewClientWithCircuitBreaker(ctx context.Context, cfg ClientConfig, opts ...
 		cbTransportCreds = grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
 
-	defaultOpts := []grpc.DialOption{
+	tracingOpts := tracing.GRPCClientInterceptors()
+	defaultOpts := make([]grpc.DialOption, 0, 3+len(tracingOpts)+len(opts))
+	defaultOpts = append(defaultOpts,
 		cbTransportCreds,
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(maxRecvMsgSize),
@@ -553,16 +628,16 @@ func NewClientWithCircuitBreaker(ctx context.Context, cfg ClientConfig, opts ...
 		grpc.WithChainUnaryInterceptor(
 			clientLoggingInterceptor(),
 			circuitBreakerInterceptor(),
-			retryInterceptor(cfg.MaxRetries, cfg.RetryWaitTime),
+			retryInterceptor(cfg),
 		),
-	}
+	)
 
 	// Add OpenTelemetry tracing interceptors for distributed tracing
-	defaultOpts = append(defaultOpts, tracing.GRPCClientInterceptors()...)
+	defaultOpts = append(defaultOpts, tracingOpts...)
+	defaultOpts = append(defaultOpts, opts...)
 
-	allOpts := append(defaultOpts, opts...)
-
-	conn, err := grpc.DialContext(ctx, cfg.Addr(), allOpts...)
+	// DialContext preserves the existing caller-controlled dial lifecycle.
+	conn, err := grpc.DialContext(ctx, cfg.Addr(), defaultOpts...) //nolint:staticcheck // grpc.NewClient does not accept a dial context.
 	if err != nil {
 		return nil, fmt.Errorf("dial grpc: %w", err)
 	}

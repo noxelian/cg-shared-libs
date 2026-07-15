@@ -143,7 +143,7 @@ func SetSpanStatus(ctx context.Context, code codes.Code, msg string) {
 // samplerFromRate returns an appropriate sampler for the given rate.
 //   - rate >= 1.0 → AlwaysSample
 //   - rate <= 0.0 → NeverSample
-//   - otherwise   → TraceIDRatioBased (parent-based, so child spans honour parent decision)
+//   - otherwise   → TraceIDRatioBased (parent-based, so child spans honor parent decision)
 func samplerFromRate(rate float64) sdktrace.Sampler {
 	if math.IsNaN(rate) || math.IsInf(rate, 0) {
 		rate = 1.0

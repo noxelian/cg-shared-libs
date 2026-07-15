@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,7 +28,7 @@ func TestIPAllowlistMiddleware_AllowedIPv4(t *testing.T) {
 	called := false
 	router := newAllowlistRouter([]string{"10.0.0.0/8"}, &called)
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", http.NoBody)
 	req.RemoteAddr = "10.5.6.7:12345"
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -44,7 +45,7 @@ func TestIPAllowlistMiddleware_BlockedIPv4(t *testing.T) {
 	called := false
 	router := newAllowlistRouter([]string{"10.0.0.0/8"}, &called)
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", http.NoBody)
 	req.RemoteAddr = "192.168.1.1:9999"
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -64,7 +65,7 @@ func TestIPAllowlistMiddleware_AllowedIPv6(t *testing.T) {
 	called := false
 	router := newAllowlistRouter([]string{"fe80::/10"}, &called)
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", http.NoBody)
 	req.RemoteAddr = "[fe80::1]:80"
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -81,7 +82,7 @@ func TestIPAllowlistMiddleware_BlockedIPv6(t *testing.T) {
 	called := false
 	router := newAllowlistRouter([]string{"fe80::/10"}, &called)
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", http.NoBody)
 	req.RemoteAddr = "[2001:db8::1]:80"
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -99,14 +100,14 @@ func TestIPAllowlistMiddleware_XForwardedFor(t *testing.T) {
 	called := false
 	router := newAllowlistRouter([]string{"10.0.0.0/8"}, &called)
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", http.NoBody)
 	req.RemoteAddr = "1.2.3.4:80"
 	req.Header.Set("X-Forwarded-For", "10.0.0.5,1.2.3.4")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 honouring XFF, got %d", rec.Code)
+		t.Fatalf("expected 200 honoring XFF, got %d", rec.Code)
 	}
 	if !called {
 		t.Fatal("downstream not called when XFF is in allowlist")
@@ -117,14 +118,14 @@ func TestIPAllowlistMiddleware_XRealIP(t *testing.T) {
 	called := false
 	router := newAllowlistRouter([]string{"10.0.0.0/8"}, &called)
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", http.NoBody)
 	req.RemoteAddr = "1.2.3.4:80"
 	req.Header.Set("X-Real-IP", "10.0.0.7")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 honouring X-Real-IP, got %d", rec.Code)
+		t.Fatalf("expected 200 honoring X-Real-IP, got %d", rec.Code)
 	}
 	if !called {
 		t.Fatal("downstream not called when X-Real-IP is in allowlist")
@@ -138,7 +139,7 @@ func TestIPAllowlistMiddleware_MultipleCIDRs(t *testing.T) {
 	{
 		called := false
 		router := newAllowlistRouter(cidrs, &called)
-		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", http.NoBody)
 		req.RemoteAddr = "192.168.1.5:1"
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -154,7 +155,7 @@ func TestIPAllowlistMiddleware_MultipleCIDRs(t *testing.T) {
 	{
 		called := false
 		router := newAllowlistRouter(cidrs, &called)
-		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", http.NoBody)
 		req.RemoteAddr = "192.168.1.6:1"
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -209,7 +210,7 @@ func TestIPAllowlistMiddleware_InvalidIP(t *testing.T) {
 	called := false
 	router := newAllowlistRouter([]string{"10.0.0.0/8"}, &called)
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", http.NoBody)
 	req.RemoteAddr = "1.2.3.4:80"
 	req.Header.Set("X-Forwarded-For", "garbage-not-an-ip")
 	rec := httptest.NewRecorder()
@@ -229,7 +230,7 @@ func TestIPAllowlistMiddleware_IPv4MappedIPv6(t *testing.T) {
 	called := false
 	router := newAllowlistRouter([]string{"10.0.0.0/8"}, &called)
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", http.NoBody)
 	req.RemoteAddr = "1.2.3.4:80"
 	req.Header.Set("X-Real-IP", "::ffff:10.0.0.1")
 	rec := httptest.NewRecorder()

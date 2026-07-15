@@ -9,17 +9,17 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func setupTestRedis(t *testing.T) (*redis.Client, func()) {
+func setupTestRedis(t *testing.T) (client *redis.Client, cleanup func()) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("failed to start miniredis: %v", err)
 	}
 
-	client := redis.NewClient(&redis.Options{
+	client = redis.NewClient(&redis.Options{
 		Addr: mr.Addr(),
 	})
 
-	cleanup := func() {
+	cleanup = func() {
 		client.Close()
 		mr.Close()
 	}
@@ -156,7 +156,9 @@ func TestLimiter_GetCount(t *testing.T) {
 
 	// Make 5 requests
 	for i := 0; i < 5; i++ {
-		limiter.Allow(ctx, "user:1")
+		if _, err := limiter.Allow(ctx, "user:1"); err != nil {
+			t.Fatalf("Allow failed: %v", err)
+		}
 	}
 
 	count, err = limiter.GetCount(ctx, "user:1")
